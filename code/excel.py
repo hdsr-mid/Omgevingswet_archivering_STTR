@@ -57,7 +57,7 @@ class ExcelHandler:
 
     def setup_worksheet(self):
         """Headers, column widths, rotated matrix headers and frozen panes."""
-        header = self.fmt("#DDDDDD", bold=True)
+        header = self.fmt("#DDDDDD", bold=True, text_wrap=True, valign="bottom")
         self.worksheet.write_row(0, 0, self.headers, header)
         for col, width in enumerate(BASE_WIDTHS):
             self.worksheet.set_column(col, col, width)
@@ -65,12 +65,15 @@ class ExcelHandler:
 
         first = len(self.headers)
         if self.gebied_columns:
-            rotated = self.fmt("#DDDDDD", bold=True, rotation=90, valign="bottom")
+            rotated = self.fmt("#DDDDDD", bold=True, rotation=90, valign="bottom",
+                               font_size=9)
             self.worksheet.write_row(0, first, self.gebied_columns, rotated)
             self.worksheet.set_column(first, first + len(self.gebied_columns) - 1,
                                       MATRIX_COLUMN_WIDTH)
+            # Excel caps a row at 409 points; at 9 points a character takes
+            # about 5, which fits names of up to ~75 characters.
             longest = max(len(c) for c in self.gebied_columns)
-            self.worksheet.set_row(0, min(409, 15 + longest * 6))
+            self.worksheet.set_row(0, min(409, 15 + longest * 5))
         self.worksheet.freeze_panes(1, 1)
         self.worksheet.autofilter(0, 0, 0, len(self.headers) - 1)
 
@@ -83,7 +86,8 @@ class ExcelHandler:
         self.worksheet.write(r, 0, name, plain)
         self.worksheet.write(r, 1, urn, plain)
         self.worksheet.write_number(r, 2, len(werkzaamheden), plain)
-        self.worksheet.write(r, 3, error and f"FOUT: {error}" or ", ".join(werkzaamheden),
+        # "; " because werkzaamheden names contain commas themselves.
+        self.worksheet.write(r, 3, error and f"FOUT: {error}" or "; ".join(werkzaamheden),
                              self.fmt("#FFC7CE") if error else plain)
         for offset, change in enumerate(changes):
             self.write_change(r, len(BASE_HEADERS) + offset, change)
