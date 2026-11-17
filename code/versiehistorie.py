@@ -59,7 +59,24 @@ class Versiehistorie:
         if os.path.exists(pad):
             with open(pad, encoding="utf-8") as f:
                 self.data.update(json.load(f))
+        self._normaliseer()
         self.bestuursorgaan = bestuursorgaan
+
+    def _normaliseer(self) -> None:
+        """sttrIds as text, each version once.
+
+        The API answers ids as numbers and manifests store them as text; a
+        history that mixed the two would never match a version it already
+        had, and grows a copy of it.
+        """
+        for r in self.data["refs"].values():
+            gezien, schoon = set(), []
+            for v in r["versies"]:
+                v["sttrId"] = str(v["sttrId"])
+                if v["sttrId"] not in gezien:
+                    gezien.add(v["sttrId"])
+                    schoon.append(v)
+            r["versies"] = schoon
 
     def bewaar(self) -> None:
         tijdelijk = self.pad + ".tmp"
@@ -158,6 +175,7 @@ class Versiehistorie:
         r = self.data["refs"].setdefault(
             ref, {"activiteit": activiteit, "label": label, "gezien_op": [],
                   "versies": []})
+        versie = {**versie, "sttrId": str(versie["sttrId"])}
         if any(v["sttrId"] == versie["sttrId"] for v in r["versies"]):
             return False
         r["versies"].append(versie)

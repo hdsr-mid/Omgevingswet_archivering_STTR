@@ -89,6 +89,14 @@ class Verdeel(unittest.TestCase):
         gearchiveerd |= set().union(*self.snap.values())
         self.assertEqual(gearchiveerd, {"1", "2", "3", "4", "9"})
 
+    def test_getal_en_tekst_zijn_dezelfde_versie(self):
+        # The API answers ids as numbers, manifests store text.
+        refs = {ref: {**r, "versies": [{**v, "sttrId": int(v["sttrId"])} for v in r["versies"]]}
+                for ref, r in self.refs.items()}
+        uit = archief.verdeel(self.c, refs, self.snap, date(2026, 11, 17))
+        self.assertEqual(sorted(uit), [(self.b1, "20240101_gewijzigd"), (self.b1, "20240322_gewijzigd"),
+                                       (self.b1, "20240701_gewijzigd")])
+
     def test_versie_niet_in_eigen_vastlegging_krijgt_map(self):
         # The snapshot missed version 4 (e.g. its activity was not walked).
         uit = archief.verdeel(self.c, self.refs, {self.b1: {"2", "9"}}, date(2026, 11, 17))
@@ -162,6 +170,17 @@ class Keten(unittest.TestCase):
             self.assertEqual(h.volg_ketens(fake, date(2024, 1, 1), date(2026, 11, 17)), 1)
             # Started at the 2025-06-01 walk, not at 2024-01-01: a few weekly steps.
             self.assertLessEqual(fake.calls, 5)
+
+    def test_dubbele_versies_bij_laden_samengevoegd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pad = os.path.join(tmp, "h.json")
+            with open(pad, "w", encoding="utf-8") as f:
+                json.dump({"walks": [], "activiteiten": {}, "refs": {"r": {
+                    "activiteit": "a", "label": "Conclusie", "gezien_op": [],
+                    "versies": [versie(70340, "05-01-2024"), versie("70340", "05-01-2024")]}}}, f)
+            h = Versiehistorie(pad, BO, "fake")
+            self.assertEqual([v["sttrId"] for v in h.data["refs"]["r"]["versies"]], ["70340"])
+            self.assertFalse(h.voeg_toe("r", "a", "Conclusie", versie(70340, "05-01-2024")))
 
     def test_maandelijks(self):
         self.assertEqual(maandelijks(date(2025, 11, 17), date(2026, 2, 1)),

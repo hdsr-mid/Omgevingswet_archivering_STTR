@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -59,6 +60,7 @@ PUBLICATIE_PDF = "https://zoek.officielebekendmakingen.nl/{id}.pdf"
 CVDR_TOESTAND = "https://lokaleregelgeving.overheid.nl/{regeling}/{toestand}"
 USER_AGENT = "rtr-archivering/2.0 (python-urllib)"
 STAPPEN = ("publicaties", "regeling", "rtr", "wijzigingen", "index")
+GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
 
 
 # ── configuration ────────────────────────────────────────────────────
@@ -300,9 +302,24 @@ class Archief:
                    for (besluitmap, naam), items in
                    verdeel(self.config, h.data["refs"], in_vastlegging, tot,
                            h.omschrijving).items()}
+        # The "<date>_gewijzigd" folders are derived from the snapshots and the
+        # history, so this step owns them: one it no longer plans goes.
+        for b in self.config.besluiten:
+            rtr_map = self.map(b, "RTR")
+            for naam in sorted(os.listdir(rtr_map)) if os.path.isdir(rtr_map) else []:
+                pad = os.path.join(rtr_map, naam)
+                if GEWIJZIGD.match(naam) and os.path.isdir(pad) and pad not in per_map:
+                    shutil.rmtree(pad)
+                    log.info("%s/RTR/%s: niet meer nodig, verwijderd", b.map, naam)
+
         for map_pad, items in sorted(per_map.items()):
             sttr_map = os.path.join(map_pad, "STTR")
             os.makedirs(sttr_map, exist_ok=True)
+            gepland = {f"STTR_{v['sttrId']}_{v['activiteit'].split('.')[-1]}_"
+                       f"{v['soort'].replace(' ', '_')}.xml" for v in items if not v.get("vervallen")}
+            for naam in os.listdir(sttr_map):
+                if naam.endswith(".xml") and naam not in gepland:
+                    os.remove(os.path.join(sttr_map, naam))
             manifest = []
             for v in sorted(items, key=lambda x: (x["activiteit"], x["soort"])):
                 if v.get("vervallen"):
@@ -489,13 +506,13 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
         for i, v in enumerate(versies):
             begin = nl_datum(v["begindatum"])
             b = config.besluit_voor(begin)
-            if v["sttrId"] in in_vastlegging.get(b.map, set()):
+            if str(v["sttrId"]) in in_vastlegging.get(b.map, set()):
                 continue
             uit[(b.map, f"{begin:%Y%m%d}_gewijzigd")].append({
-                **v, "ref": ref, "activiteit": r["activiteit"], "soort": r["label"],
+                **v, "sttrId": str(v["sttrId"]), "ref": ref, "activiteit": r["activiteit"], "soort": r["label"],
                 "omschrijving": omschrijving(r["activiteit"]),
-                "vervangt": versies[i - 1]["sttrId"] if i else None,
-                "vervangen_door": versies[i + 1]["sttrId"] if i + 1 < len(versies) else None})
+                "vervangt": str(versies[i - 1]["sttrId"]) if i else None,
+                "vervangen_door": str(versies[i + 1]["sttrId"]) if i + 1 < len(versies) else None})
         if versies and versies[-1].get("einddatum"):
             weg = nl_datum(versies[-1]["einddatum"]) + timedelta(days=1)
             if weg <= tot:
@@ -503,7 +520,7 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
                 uit[(b.map, f"{weg:%Y%m%d}_gewijzigd")].append({
                     "vervallen": True, "ref": ref, "activiteit": r["activiteit"],
                     "soort": r["label"], "omschrijving": omschrijving(r["activiteit"]),
-                    "laatste_versie": versies[-1]["sttrId"]})
+                    "laatste_versie": str(versies[-1]["sttrId"])})
     return dict(uit)
 
 
