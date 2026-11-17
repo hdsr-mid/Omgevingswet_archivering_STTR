@@ -1,288 +1,234 @@
 """
-RTR (Registratie Toepasbare Regels) data archiving module.
+RTR (Registratie Toepasbare Regels) archiving.
 
-This module handles the main archiving logic for RTR data from the IPLO Omgevingswet API.
-It processes activities, extracts werkzaamheden and regelbeheerobjecten, and generates
-Excel reports and optional STTR XML files.
+Reads everything from the public RTR viewer backend (see ``rtr_client``): no
+API key and no PowerBI exports.  For one bestuursorgaan on one date it
+
+- finds all its activities by walking its own activity tree,
+- reads per activity: werkzaamheden, werkingsgebieden (with their names) and
+  per STTR flavour the last change date,
+- writes the Excel status overview with the werkingsgebieden matrix,
+- optionally downloads every STTR (DMN XML) and writes a werkingsgebieden list.
+
+Each activity is fetched exactly once and everything is keyed by its URN, so
+a renamed activity or two activities sharing a name cannot lose or mix up
+their werkingsgebieden.
 """
 
+from __future__ import annotations
+
+import json
+import logging
 import os
-import requests
-import urllib.parse
-from collections import OrderedDict
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime
 
-from excel import ExcelHandler
-from powerbi import PowerBIData
-from commands import ArgumentParser  
+import catalogus
+from catalogus import Activiteit, Bestuursorgaan
+from excel import ExcelHandler, generate_file_path
+from rtr_client import BASE_URLS, RtrClient, RtrError
+
+log = logging.getLogger("rtr")
+
+STTR_LABELS = ("Conclusie", "Melding", "Aanvraag vergunning", "Informatie", "Maatregelen")
+AMBTSGEBIED = "Ambtsgebied"
+
+
+@dataclass
+class Gebied:
+    identificatie: str
+    noemer: str
+
+    @property
+    def label(self) -> str:
+        """The column a gebied is shown under.
+
+        The ambtsgebied is the whole territory rather than a werkingsgebied,
+        so it gets one recognisable name whichever bestuursorgaan it is.
+        """
+        if ".ambtsgebied." in self.identificatie:
+            return AMBTSGEBIED
+        return (self.noemer or self.identificatie).strip()
+
+
+@dataclass
+class Sttr:
+    sttr_id: str
+    begindatum: str = ""
+    laatste_wijziging: str = ""
+
+
+@dataclass
+class ActiviteitRecord:
+    activiteit: Activiteit
+    werkzaamheden: list[str] = field(default_factory=list)
+    gebieden: list[Gebied] = field(default_factory=list)
+    sttrs: dict[str, Sttr] = field(default_factory=dict)
+    fout: str = ""
+
+    @property
+    def urn(self) -> str:
+        return self.activiteit.identifier
+
+    @property
+    def naam(self) -> str:
+        return self.activiteit.omschrijving or self.urn
+
+    @property
+    def urn_kort(self) -> str:
+        return self.urn.split(".")[-1]
+
+
+def iso_datum(datum: str) -> str:
+    """dd-mm-jjjj → jjjj-mm-dd, the form the API documents."""
+    return datetime.strptime(datum, "%d-%m-%Y").strftime("%Y-%m-%d")
+
 
 class RTR:
-    """
-    Main RTR archiving class.
-    
-    This class handles the complete archiving workflow:
-    - Fetching activity data from the IPLO RTR API
-    - Processing werkzaamheden and regelbeheerobjecten
-    - Generating Excel reports with color-coded dates
-    - Optionally archiving STTR DMN files
-    - Optionally exporting werkingsgebieden mappings
-    """
-    
-    def __init__(self, args):
-        self.args = args 
-        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
-        self.api_key = self.load_api_key(os.path.join(self.base_dir, 'data', f"{self.args.env}_API_key.txt"))
-        self.base_url = self.compose_base_url(self.args.env)
-        self.powerbi_env = "PRE" if self.args.env == "pre" else "PROD"
-        self.session_headers = {'Accept': 'application/hal+json, application/xml', 'x-api-key': self.api_key}
-        self.urn_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                 'data', 
-                                 f"A1. Welke activiteiten zijn gewijzigd {self.powerbi_env}.xlsx")
-        self.location_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                'data', 
-                                f"A3. Wie gebruikt welke locaties (in STTR) {self.powerbi_env}.xlsx")
-        self.headers = ["Activiteit                   ",
-                        "Urn",              
-                        "Aantal",
-                        "Werkzaamheden",          
-                        "Wijziging Conclusie",
-                        "Wijziging Melding",
-                        "Wijziging Aanvraag vergunning",
-                        "Wijziging Informatie"  ]
-        self.powerbi = PowerBIData(self.urn_file_path, self.location_file_path)
-        self.urns = self.powerbi.get_urns(self.args.overheid) 
-        self.geo_variables = self.powerbi.get_location_identifiers(self.args.overheid)
-        self.session = requests.Session()
-        self.sttr_url_per_activity = {}
-        self.werkingsgebied_per_activity = {}
-        self.unique_werkingsgebieden = set()
-        self.excel_handler = None
+    """Archive the toepasbare regels of one bestuursorgaan on one date."""
 
-    @staticmethod
-    def load_api_key(api_key_file):
-        with open(api_key_file) as key_file:
-            return key_file.read().strip()
+    def __init__(self, args, client: RtrClient | None = None):
+        self.args = args
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.datum = iso_datum(args.date)
+        self.client = client or RtrClient(BASE_URLS[args.env], rate=args.rate)
+        self.bestuursorgaan = self._zoek_bestuursorgaan()
 
-    def archive_activities(self):
-        for activity in self.urns:
-            print(activity)
-            self.collect_unique_werkingsgebieden(activity)
-        
-        headers = self.headers + sorted(self.unique_werkingsgebieden)
-        self.excel_handler = ExcelHandler(self.args.overheid, self.base_dir, self.args.env, self.args.date, headers)
-        
-        for row, activity in enumerate(self.urns, 2):
-            self.process_activity(activity, row)
-        
-        self.excel_handler.close_workbook()
+    def _zoek_bestuursorgaan(self) -> Bestuursorgaan:
+        if self.args.oin:
+            return catalogus.zoek_op_oin(self.client, self.args.oin, self.datum)
+        return catalogus.zoek_op_naam(self.client, self.args.overheid, self.datum)
+
+    # ── workflow ─────────────────────────────────────────────────────
+
+    def archive_activities(self) -> list[ActiviteitRecord]:
+        suffixen = () if self.args.include_t5 else catalogus.STANDAARD_OVERGESLAGEN_SUFFIX
+        activiteiten = catalogus.enumereer_activiteiten(
+            self.client, self.bestuursorgaan, datum=self.datum,
+            overgeslagen_suffix=suffixen)
+
+        records = []
+        for nummer, activiteit in enumerate(activiteiten, 1):
+            log.info("[%d/%d] %s", nummer, len(activiteiten), activiteit.omschrijving)
+            records.append(self.lees_activiteit(activiteit))
+
+        self.write_status(records)
         if self.args.sttr:
-            self.archive_sttr_files()
+            self.archive_sttr_files(records)
         if self.args.location:
-            self.sorted_gebied_to_activities = self.invert_werkingsgebied_mapping()
-            self.write_werkingsgebieden_to_file()
+            self.write_werkingsgebieden_to_file(records)
 
-    def collect_unique_werkingsgebieden(self, activity):
-        government, name, uri = activity
-        response_json = self.get_activity_data(uri)
-        if response_json:
-            self.update_werkingsgebied_per_activity(response_json)
+        mislukt = [r for r in records if r.fout]
+        log.info("Klaar: %d activiteiten, %d mislukt, %d verzoeken aan de RTR",
+                 len(records), len(mislukt), self.client.requests_made)
+        return records
 
-    def process_activity(self, activity, row):
-        government, name, uri = activity
-        response_json = self.get_activity_data(uri)
-        
-        if response_json:
-            self.archive_activity_data(row, name, uri, response_json)
+    def lees_activiteit(self, activiteit: Activiteit) -> ActiviteitRecord:
+        record = ActiviteitRecord(activiteit)
+        try:
+            details = self.client.details(activiteit.identifier, self.datum)
+            record.werkzaamheden = list(details.get("werkzaamheden") or [])
+            record.gebieden = [
+                Gebied(loc.get("identificatie", ""), loc.get("noemer", ""))
+                for loc in self.client.locaties(activiteit.identifier, self.datum)
+                if loc.get("identificatie")]
+            for label, ref in activiteit.regelbeheerobjecten.items():
+                meta = self.client.sttr_metadata(ref, self.datum)
+                if meta.get("sttrId"):
+                    record.sttrs[label] = Sttr(
+                        str(meta["sttrId"]), meta.get("begindatum", ""),
+                        meta.get("laatsteWijzigingDatum", ""))
+        except RtrError as exc:
+            record.fout = str(exc)
+            log.error("%s: %s", activiteit.identifier, exc)
+        return record
 
-    def get_activity_data(self, uri):
-        url = self.compose_activity_url(uri)
-        response = self.session.get(url, headers=self.session_headers)
-        
-        if response.ok:
-            self.update_werkingsgebied_per_activity(response.json())
-            return response.json()
-        print(f"Error fetching data for URI {uri}: {response.status_code}")
-        return None
-    
-    def update_werkingsgebied_per_activity(self, json_data):
-        activity_description = self.extract_activity_description(json_data)
-        identifications = self.extract_identifications(json_data)
-        matched_descriptions = self.match_descriptions(identifications)
-        self.update_activity_mapping(activity_description, matched_descriptions)
+    # ── outputs ──────────────────────────────────────────────────────
 
-    def extract_activity_description(self, json_data):
-        return json_data.get('omschrijving', 'No description')
-
-    def extract_identifications(self, json_data):
-        return [loc['identificatie'] for loc in json_data.get('locaties', [])]
-
-    def match_descriptions(self, identifications):
-        matched_descriptions = []
-        for url in identifications:
-            description = self.get_description(url)
-            matched_descriptions.append(description)
-        return matched_descriptions
-
-    def get_description(self, url):
-        if self.geo_variables.get(url) != None:
-            return self.geo_variables.get(url)
-        elif "ambtsgebied" in url:
-            return 'Ambtsgebied'
-        else:
-            return url
-            
-    def update_activity_mapping(self, activity_description, matched_descriptions):
-        self.unique_werkingsgebieden.update(matched_descriptions)
-        if activity_description in self.werkingsgebied_per_activity:
-            self.werkingsgebied_per_activity[activity_description].extend(matched_descriptions)
-        else:
-            self.werkingsgebied_per_activity[activity_description] = matched_descriptions
-        
-    def invert_werkingsgebied_mapping(self):
-        gebied_to_activities = {}
-        for activity, gebieden in self.werkingsgebied_per_activity.items():
-            for gebied in gebieden:
-                if gebied not in gebied_to_activities:
-                    gebied_to_activities[gebied] = set()  # Use a set to avoid duplicates
-                gebied_to_activities[gebied].add(activity)
-        
-        # Convert the sets back to lists and sort them
-        for gebied in gebied_to_activities:
-            gebied_to_activities[gebied] = sorted(gebied_to_activities[gebied])
-        
-        sorted_gebied_to_activities = OrderedDict(sorted(gebied_to_activities.items()))
-        return sorted_gebied_to_activities
-
-    def write_werkingsgebieden_to_file(self):      
-        file_path = self.create_file_path('log', f"{self.args.overheid.replace(' ', '_')}_waterschapsverordening_werkingsgebieden_{self.args.env}_{self.args.date}.txt")
-        gebied_to_activities = self.invert_werkingsgebied_mapping()
-        self.write_to_file(file_path, gebied_to_activities)
-
-    def create_file_path(self, directory, filename):
-        # Ensure the directory exists
-        dir_path = os.path.join(self.base_dir, directory)
-        os.makedirs(dir_path, exist_ok=True)
-        
-        # Create the full file path
-        file_path = os.path.join(dir_path, filename)
-        return file_path
-
-    def write_to_file(self, file_path, data):
-        with open(file_path, 'w', encoding='utf-8') as file:
-            for key, values in data.items():
-                file.write(f"{key}:\n")
-                for value in values:
-                    file.write(f"  - {value}\n")
-                file.write("\n")
+    def _pad(self, suffix: str, extension: str | None = None) -> str:
+        return generate_file_path(self.args.date, self.bestuursorgaan.naam,
+                                  self.args.env, suffix, self.base_dir, extension)
 
     @staticmethod
-    def extract_werkzaamheden(data):
-        werkzaamheden_list = []
-        counter = 0
-        if "werkzaamheden" in data["_links"]:
-            for werkzaamheid in data["_links"]["werkzaamheden"]:
-                extracted_id = werkzaamheid["href"].split("/")[(-1)]
-                clean_id = extracted_id.split("?")[0]
-                werkzaamheden_list.append(clean_id)
-                counter += 1
-        return [counter, [', '.join(werkzaamheden_list)] if werkzaamheden_list else [""]]
+    def gebied_kolommen(records: list[ActiviteitRecord]) -> list[str]:
+        """Matrix columns: Ambtsgebied first, then werkingsgebieden by name."""
+        labels = {g.label for r in records for g in r.gebieden}
+        return sorted(labels, key=lambda l: (l != AMBTSGEBIED, l.casefold()))
 
-    def fetch_and_process_changes(self, data):
-        urn_name = data["urn"].split(".")[-1]
-        changes = ["", "", "", ""]
-        
-        if "regelBeheerObjecten" in data:
-            for object in data["regelBeheerObjecten"]:
-                object_type, last_changed = self.process_individual_object(urn_name, object)
-                if object_type in {"Conclusie", "Melding", "Aanvraag vergunning", "Informatie"}:
-                    index = ["Conclusie", "Melding", "Aanvraag vergunning", "Informatie"].index(object_type)
-                    changes[index] = last_changed
-        return changes
+    def write_status(self, records: list[ActiviteitRecord]) -> str:
+        kolommen = self.gebied_kolommen(records)
+        pad = self._pad("status", "xlsx")
+        excel = ExcelHandler(pad, kolommen, datetime.strptime(self.args.date, "%d-%m-%Y"))
+        for row, record in enumerate(records, 2):
+            labels = {g.label for g in record.gebieden}
+            excel.write_activity_row(
+                row,
+                name=record.naam,
+                urn=record.urn,
+                werkzaamheden=record.werkzaamheden,
+                changes=[record.sttrs[l].laatste_wijziging if l in record.sttrs else ""
+                         for l in STTR_LABELS],
+                gebieden=[k in labels for k in kolommen],
+                error=record.fout,
+            )
+        excel.close_workbook()
+        log.info("Statusoverzicht: %s", pad)
+        return pad
 
-    def process_individual_object(self, urn_name, object):
-        object_type = object["typering"]
-        if object_type == "Indieningsvereisten":
-            object_type = object["toestemming"]["waarde"]
-
-        functional_structure_reference = object["functioneleStructuurRef"]
-        last_changed = self.get_regelbeheerobject(urn_name, object_type, functional_structure_reference)
-        return object_type, last_changed
-    
-    def get_regelbeheerobject(self, urn_name, object_type, functional_structure_reference):
-        url = self.compose_regel_beheer_object_url(functional_structure_reference)
-        response = self.session.get(url, headers=self.session_headers)
-
-        if response.ok:
-            data = response.json()
-            self.append_sttr_file(urn_name, object_type, data)
-            last_changed = self.get_last_change_date(data)
-            return last_changed
-
-    def get_last_change_date(self, data):
-        embedded = data.get('_embedded', {})
-        applicable_rules = embedded.get('toepasbareRegels', [])
-        if applicable_rules:
-            return applicable_rules[0].get("laatsteWijzigingDatum", "")
-        else:
-            return ""
-    
-    def append_sttr_file(self, urn_name, regelbeheerobject_type, data):
-        try:
-            sttr_bestand_href = data['_embedded']['toepasbareRegels'][0]['_links']['sttrBestand']['href']
-            if regelbeheerobject_type != "null":
-                regelbeheerobject_name = urn_name + "_" + regelbeheerobject_type.replace(" ", "_")
-                self.sttr_url_per_activity[regelbeheerobject_name] = sttr_bestand_href
-            
-        except KeyError as e:
-            identifier = self.extract_identifier(data)
-            print(f"Data missing key: '{e}'. Regelbeheerobject: {identifier}")
-
-    def archive_sttr_files(self):
-        folder_name = self.excel_handler.generate_file_path(self.args.date, self.args.overheid, self.args.env, "DMN-files", self.base_dir)
-        os.makedirs(folder_name, exist_ok=True)
-            
-        for key, url in self.sttr_url_per_activity.items():
-            identifier = url.split('/toepasbareRegels/')[1].split('/')[0]
-            response = self.session.get(url, headers=self.session_headers)
-                
-            if response.status_code == 200:
-                file_path = os.path.join(folder_name, f'STTR_{identifier}_{key}.xml')
-                with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(response.text)
-            else:
-                print(f"Failed to download data from {url}, status code: {response.status_code}")
-
-    def extract_identifier(self, data):
-        try:
-            url = data.get('_links', {}).get('self', {}).get('href', "")
-            functionele_structuur_ref = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get('functioneleStructuurRef', [''])[0]
-            return functionele_structuur_ref.split('/')[-1]
-        except Exception:
-            return "Unknown"  
+    def archive_sttr_files(self, records: list[ActiviteitRecord]) -> str:
+        folder = self._pad("DMN-files")
+        os.makedirs(folder, exist_ok=True)
+        manifest = []
+        for record in records:
+            for label, sttr in record.sttrs.items():
+                naam = f"STTR_{sttr.sttr_id}_{record.urn_kort}_{label.replace(' ', '_')}.xml"
+                try:
+                    inhoud = self.client.download_sttr(sttr.sttr_id)
+                except RtrError as exc:
+                    log.error("STTR %s (%s) niet opgehaald: %s", sttr.sttr_id, naam, exc)
+                    continue
+                # Bytes as published: an archive keeps the original.
+                with open(os.path.join(folder, naam), "wb") as f:
+                    f.write(inhoud)
+                manifest.append({
+                    "bestand": naam, "activiteit": record.urn,
+                    "omschrijving": record.naam, "soort": label,
+                    "sttrId": sttr.sttr_id, "begindatum": sttr.begindatum,
+                    "laatsteWijzigingDatum": sttr.laatste_wijziging,
+                })
+        with open(os.path.join(folder, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({
+                "bestuursorgaan": self.bestuursorgaan.naam,
+                "oin": self.bestuursorgaan.oin,
+                "omgeving": self.args.env,
+                "peildatum": self.args.date,
+                "bron": self.client.base_url,
+                "sttrs": manifest,
+            }, f, ensure_ascii=False, indent=2)
+        log.info("DMN-bestanden: %d in %s", len(manifest), folder)
+        return folder
 
     @staticmethod
-    def compose_base_url(env):
-        return f"https://service{'' if env == 'prod' else '.pre'}.omgevingswet.overheid.nl/publiek/toepasbare-regels/api"
+    def invert_werkingsgebied_mapping(records: list[ActiviteitRecord]):
+        """gebied label → (identificaties, sorted activity names)."""
+        ids: dict[str, set[str]] = defaultdict(set)
+        activiteiten: dict[str, set[str]] = defaultdict(set)
+        for record in records:
+            for gebied in record.gebieden:
+                ids[gebied.label].add(gebied.identificatie)
+                activiteiten[gebied.label].add(record.naam)
+        return {label: (sorted(ids[label]), sorted(activiteiten[label], key=str.casefold))
+                for label in sorted(ids, key=lambda l: (l != AMBTSGEBIED, l.casefold()))}
 
-    def compose_activity_url(self, uri):
-        return f"{self.base_url}/rtrgegevens/v2/activiteiten/{uri}?datum={self.args.date}"
-
-    def compose_regel_beheer_object_url(self, functional_structure_reference):
-        return f"{self.base_url}/toepasbareregelsuitvoerengegevens/v1/toepasbareRegels?functioneleStructuurRef={functional_structure_reference}&datum={self.args.date}"
-
-    def archive_activity_data(self, row, name, uri, data):
-        werkzaamheden = self.extract_werkzaamheden(data)
-        changes = self.fetch_and_process_changes(data)
-
-        unique_werkingsgebieden = sorted(self.unique_werkingsgebieden)
-        werkingsgebieden_indices = {gebied: index for index, gebied in enumerate(unique_werkingsgebieden)}
-        activity_werkingsgebieden_presence = [" "] * len(unique_werkingsgebieden)
-
-        for gebied in self.werkingsgebied_per_activity.get(name.lower(), []):
-            activity_werkingsgebieden_presence[werkingsgebieden_indices[gebied]] = 1
-            
-        data_to_write = [name, uri, werkzaamheden[0]] + werkzaamheden[1] + changes + activity_werkingsgebieden_presence
-        self.excel_handler.write_data_to_cells(row, data_to_write)                 
-        
-    def decodeSpecialChar(self, string):
-        return string.encode("latin1").decode("utf-8")
+    def write_werkingsgebieden_to_file(self, records: list[ActiviteitRecord]) -> str:
+        pad = self._pad("werkingsgebieden", "txt")
+        os.makedirs(os.path.dirname(pad), exist_ok=True)
+        with open(pad, "w", encoding="utf-8") as f:
+            for label, (identificaties, namen) in self.invert_werkingsgebied_mapping(records).items():
+                f.write(f"{label} ({', '.join(identificaties)}):\n")
+                for naam in namen:
+                    f.write(f"  - {naam}\n")
+                f.write("\n")
+        log.info("Werkingsgebieden: %s", pad)
+        return pad
