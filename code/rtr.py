@@ -17,6 +17,7 @@ their werkingsgebieden.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -59,6 +60,8 @@ class Sttr:
     sttr_id: str
     begindatum: str = ""
     laatste_wijziging: str = ""
+    einddatum: str = ""
+    ref: str = ""
 
 
 @dataclass
@@ -88,14 +91,31 @@ def iso_datum(datum: str) -> str:
 
 
 class RTR:
-    """Archive the toepasbare regels of one bestuursorgaan on one date."""
+    """Archive the toepasbare regels of one bestuursorgaan on one date.
 
-    def __init__(self, args, client: RtrClient | None = None):
+    By default the outputs go to ``log/`` with the date, bestuursorgaan and
+    environment in their names.  With *uitvoer* they go into that folder as
+    ``status.xlsx``, ``werkingsgebieden.txt`` and ``STTR/``.
+
+    *datumveld* chooses what the status overview shows per STTR flavour:
+    ``"laatste"`` the last change (``laatsteWijzigingDatum``, the upload of
+    a current version), or ``"begin"`` the date the version took effect.  For
+    a past peildatum only the latter is stable: the RTR overwrites the last
+    change of a version when it gets an einddatum.
+    """
+
+    def __init__(self, args, client: RtrClient | None = None, *,
+                 uitvoer: str | None = None, datumveld: str = "laatste",
+                 bestuursorgaan: Bestuursorgaan | None = None):
         self.args = args
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.datum = iso_datum(args.date)
         self.client = client or RtrClient(BASE_URLS[args.env], rate=args.rate)
-        self.bestuursorgaan = self._zoek_bestuursorgaan()
+        self.uitvoer = uitvoer
+        if datumveld not in ("laatste", "begin"):
+            raise ValueError(f"datumveld moet 'laatste' of 'begin' zijn, niet {datumveld!r}")
+        self.datumveld = datumveld
+        self.bestuursorgaan = bestuursorgaan or self._zoek_bestuursorgaan()
 
     def _zoek_bestuursorgaan(self) -> Bestuursorgaan:
         if self.args.oin:
@@ -140,7 +160,8 @@ class RTR:
                 if meta.get("sttrId"):
                     record.sttrs[label] = Sttr(
                         str(meta["sttrId"]), meta.get("begindatum", ""),
-                        meta.get("laatsteWijzigingDatum", ""))
+                        meta.get("laatsteWijzigingDatum", ""),
+                        meta.get("einddatum") or "", ref)
         except RtrError as exc:
             record.fout = str(exc)
             log.error("%s: %s", activiteit.identifier, exc)
@@ -148,7 +169,12 @@ class RTR:
 
     # ── outputs ──────────────────────────────────────────────────────
 
+    _NAMEN = {"status": "status.xlsx", "werkingsgebieden": "werkingsgebieden.txt",
+              "DMN-files": "STTR"}
+
     def _pad(self, suffix: str, extension: str | None = None) -> str:
+        if self.uitvoer:
+            return os.path.join(self.uitvoer, self._NAMEN[suffix])
         return generate_file_path(self.args.date, self.bestuursorgaan.naam,
                                   self.args.env, suffix, self.base_dir, extension)
 
@@ -164,7 +190,9 @@ class RTR:
             {l for r in records for l in r.sttrs} - set(STTR_LABELS), key=str.casefold)
         pad = self._pad("status", "xlsx")
         excel = ExcelHandler(pad, kolommen, datetime.strptime(self.args.date, "%d-%m-%Y"),
-                             change_labels=soorten)
+                             change_labels=soorten,
+                             change_header="Geldig vanaf" if self.datumveld == "begin" else "Wijziging")
+        veld = "begindatum" if self.datumveld == "begin" else "laatste_wijziging"
         for row, record in enumerate(records, 2):
             labels = {g.label for g in record.gebieden}
             excel.write_activity_row(
@@ -172,7 +200,7 @@ class RTR:
                 name=record.naam,
                 urn=record.urn,
                 werkzaamheden=record.werkzaamheden,
-                changes=[record.sttrs[l].laatste_wijziging if l in record.sttrs else ""
+                changes=[getattr(record.sttrs[l], veld) if l in record.sttrs else ""
                          for l in soorten],
                 gebieden=[k in labels for k in kolommen],
                 error=record.fout,
@@ -200,7 +228,10 @@ class RTR:
                     "bestand": naam, "activiteit": record.urn,
                     "omschrijving": record.naam, "soort": label,
                     "sttrId": sttr.sttr_id, "begindatum": sttr.begindatum,
+                    "einddatum": sttr.einddatum,
                     "laatsteWijzigingDatum": sttr.laatste_wijziging,
+                    "functioneleStructuurRef": sttr.ref,
+                    "sha256": hashlib.sha256(inhoud).hexdigest(),
                 })
         with open(os.path.join(folder, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump({

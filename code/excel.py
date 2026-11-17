@@ -26,17 +26,19 @@ class ExcelHandler:
     """Writes the status overview of one archiving run."""
 
     def __init__(self, workbook_path: str, gebied_columns: list[str],
-                 reference_date: datetime, change_labels: list[str] | None = None):
+                 reference_date: datetime, change_labels: list[str] | None = None,
+                 change_header: str = "Wijziging"):
         """
         Args:
             workbook_path: where the .xlsx goes
             gebied_columns: werkingsgebied names, one matrix column each
             reference_date: the peildatum; change dates are coloured by how
                 long before this date they are
-            change_labels: STTR flavours, one "Wijziging …" column each
+            change_labels: STTR flavours, one "<change_header> …" column each
+            change_header: "Wijziging" (last change) or "Geldig vanaf"
         """
         self.change_labels = list(change_labels or DEFAULT_CHANGE_LABELS)
-        self.headers = BASE_HEADERS + [f"Wijziging {l}" for l in self.change_labels]
+        self.headers = BASE_HEADERS + [f"{change_header} {l}" for l in self.change_labels]
         os.makedirs(os.path.dirname(workbook_path), exist_ok=True)
         self.workbook_path = workbook_path
         self.gebied_columns = gebied_columns
@@ -97,10 +99,14 @@ class ExcelHandler:
                                        self.fmt(BLUE) if present else plain)
 
     def write_change(self, r: int, col: int, content: str):
-        """A change date, green by how recent; anything else plain."""
-        try:
-            date = datetime.strptime(str(content), DATE_FORMAT)
-        except ValueError:
+        """A date, green by how recent; anything else plain."""
+        for form in (DATE_FORMAT, "%d-%m-%Y"):
+            try:
+                date = datetime.strptime(str(content), form)
+                break
+            except ValueError:
+                continue
+        else:
             self.worksheet.write(r, col, content, self.fmt())
             return
         days = (self.reference_date - date).days

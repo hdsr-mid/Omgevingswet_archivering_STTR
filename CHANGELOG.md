@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `code/archief.py`: archief per definitief besluit van een regeling, met ontwerp en kennisgevingen, het besluit, de hele regeling per toestand (PDF), volledige RTR-vastleggingen op gekozen peildata en een map per dag waarop toepasbare regels later nog wijzigden; controleert dat elke STTR-versie gearchiveerd is
+- `code/versiehistorie.py`: reconstrueert alle STTR-versies van een bestuursorgaan uit de RTR
+- `data/archief_CVDR707248.json`: de besluiten van de Waterschapsverordening HDSR met hun publicaties en peildata
+- Statusoverzicht kan per soort de begindatum van de versie tonen (`Geldig vanaf …`); het archief gebruikt dat
+- STTR-manifest vermeldt einddatum, functioneleStructuurRef en SHA-256
+
 ## [2.0.0] - 2026-11-17
 
 ### Changed

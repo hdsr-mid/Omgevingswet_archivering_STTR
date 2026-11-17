@@ -186,9 +186,10 @@ class Matrix(unittest.TestCase):
         written = {}
 
         class Recorder:
-            def __init__(self, path, columns, ref, change_labels):
+            def __init__(self, path, columns, ref, change_labels, change_header="Wijziging"):
                 written["columns"] = columns
                 written["change_labels"] = change_labels
+                written["change_header"] = change_header
                 written["rows"] = {}
 
             def write_activity_row(self, row, **kw):
@@ -273,9 +274,11 @@ class Matrix(unittest.TestCase):
         folder = archiver._pad("DMN-files")
         files = sorted(os.listdir(folder))
         self.assertEqual(files, ["STTR_11_Duiker_Conclusie.xml", "STTR_12_Lozen_Maatregelen.xml", "manifest.json"])
-        manifest = json.load(open(os.path.join(folder, "manifest.json"), encoding="utf-8"))
+        with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
         self.assertEqual(len(manifest["sttrs"]), 2)
-        tekst = open(archiver._pad("werkingsgebieden", "txt"), encoding="utf-8").read()
+        with open(archiver._pad("werkingsgebieden", "txt"), encoding="utf-8") as f:
+            tekst = f.read()
         self.assertIn("Vaarweg (nl.imow-ws0636.gebied.1):\n  - duiker aanleggen\n  - Maatwerkvoorschrift aanvragen\n", tekst)
 
 

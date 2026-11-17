@@ -88,6 +88,37 @@ Alles komt in `log/`, met de peildatum, de naam van het bestuursorgaan en de omg
 - `…_STTR_DMN-files/` (met `--sttr`): `STTR_<sttrId>_<activiteit>_<soort>.xml`, byte voor byte zoals gepubliceerd, plus `manifest.json` met per bestand de activiteit, soort, begindatum en laatste wijziging.
 - `…_STTR_werkingsgebieden.txt` (met `--location`): per werkingsgebied de identificatie(s) en de activiteiten die er gelden.
 
+## Archief per besluit
+
+`code/archief.py` legt een regeling per definitief besluit vast: de publicaties, de hele regeling en élke versie van de toepasbare regels die eronder viel. Welke besluiten, publicaties en peildata dat zijn, staat in een JSON-bestand; voor de Waterschapsverordening van HDSR is dat [data/archief_CVDR707248.json](data/archief_CVDR707248.json).
+
+```bash
+pip install -r requirements-archief.txt
+python code/archief.py data/archief_CVDR707248.json --rate 4
+```
+
+Per definitief besluit één map, genoemd naar de besluitdatum:
+
+```
+archief/
+├── README.md, index.csv (elk bestand met SHA-256), versiehistorie.json
+└── 20250715_wijzigingsbesluit-h2-3-4_wsb-2025-17997/
+    ├── LEESMIJ.md
+    ├── Ontwerp/      ontwerpbesluit en kennisgevingen (PDF uit het Waterschapsblad)
+    ├── Definitief/   het besluit (PDF uit het Waterschapsblad) en de hele regeling
+    │                 zoals die vanaf de inwerkingtreding gold (PDF)
+    └── RTR/
+        ├── 20250801_volledig/   alle toepasbare regels die op die dag golden
+        ├── 20250808_volledig/   (status.xlsx, werkingsgebieden.txt, STTR/)
+        └── 20250902_gewijzigd/  alleen wat op die dag inging (STTR/)
+```
+
+- **Volledig:** elke STTR-versie hoort bij het besluit in wiens periode (inwerkingtreding tot de volgende) hij inging. Staat hij in een volledige vastlegging van dat besluit, dan is hij daar gearchiveerd; anders krijgt hij een map `<datum>_gewijzigd` voor de dag waarop hij inging. Dat geldt voor latere wijzigingen en voor eerste uploads die binnen enkele dagen weer vervangen werden. `STTR/manifest.json` noemt per bestand welke versie het vervangt en waardoor het vervangen werd; vervallen regelbeheerobjecten staan erin zonder bestand. Het `README.md` van het archief controleert dat alle versies uit `versiehistorie.json` erin staan.
+- **Versiegeschiedenis:** de RTR geeft per regelbeheerobject alleen de versie op een datum. De tool loopt de activiteitenboom maandelijks en op elke peildatum af en volgt per regelbeheerobject de keten van versies (`code/versiehistorie.py`).
+- **Hele regeling:** de wijzigingsbesluiten bevatten alleen de wijzigingen. De hele regeling wordt per toestand afgedrukt van [lokaleregelgeving.overheid.nl](https://lokaleregelgeving.overheid.nl/CVDR707248), met de afdrukopmaak van die site, in A4 en met bron en afdrukdatum in de voettekst. Dat gebeurt met Playwright: op Windows met de geïnstalleerde Edge, elders met Chrome of met `python -m playwright install chromium-headless-shell`, of met `--browser <pad>`.
+- **Statusoverzicht:** in het archief toont `status.xlsx` per soort de datum waarop de versie inging (`Geldig vanaf …`). De laatste wijzigingsdatum van een versie overschrijft de RTR zodra die versie vervangen wordt, dus voor een peildatum in het verleden zegt die niets.
+- **Stappen:** `--stappen publicaties,regeling,rtr,wijzigingen,index` (standaard alle). Wat er al is, wordt overgeslagen; een nieuw besluit toevoegen aan het JSON-bestand en opnieuw draaien vult het archief aan.
+
 ## Tests
 
 ```bash
@@ -105,12 +136,17 @@ python -m unittest discover -s tests
 │   ├── rtr_client.py    # Client voor de RTR (geen API-key)
 │   ├── catalogus.py     # Bestuursorgaan vinden, activiteitenboom aflopen
 │   ├── excel.py         # Excel-statusoverzicht
+│   ├── archief.py       # Archief per besluit (publicaties, regeling, alle STTR-versies)
+│   ├── versiehistorie.py # Alle STTR-versies van een bestuursorgaan uit de RTR
 │   └── vertrouwen.py    # HTTPS op Windows met een nog onbekend root-certificaat
 ├── tests/
 ├── data/
+│   ├── archief_CVDR707248.json  # Besluiten Waterschapsverordening HDSR
 │   └── xlsx_example.PNG
 ├── log/                 # Gegenereerde output (niet in git)
+├── archief/             # Archief per besluit (niet in git)
 ├── requirements.txt
+├── requirements-archief.txt  # Playwright, voor de PDF van de hele regeling
 └── README.md
 ```
 

@@ -6,3 +6,6 @@ __pycache__/
 
 # Exclude logs
 /log/*
+
+# Archive output (see code/archief.py)
+/archief/
