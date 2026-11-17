@@ -31,6 +31,8 @@ from rtr_client import BASE_URLS, RtrClient, RtrError
 
 log = logging.getLogger("rtr")
 
+# The status overview's "Wijziging …" columns, in this order; any other
+# flavour the RTR turns up gets a column after these.
 STTR_LABELS = ("Conclusie", "Melding", "Aanvraag vergunning", "Informatie", "Maatregelen")
 AMBTSGEBIED = "Ambtsgebied"
 
@@ -158,8 +160,11 @@ class RTR:
 
     def write_status(self, records: list[ActiviteitRecord]) -> str:
         kolommen = self.gebied_kolommen(records)
+        soorten = list(STTR_LABELS) + sorted(
+            {l for r in records for l in r.sttrs} - set(STTR_LABELS), key=str.casefold)
         pad = self._pad("status", "xlsx")
-        excel = ExcelHandler(pad, kolommen, datetime.strptime(self.args.date, "%d-%m-%Y"))
+        excel = ExcelHandler(pad, kolommen, datetime.strptime(self.args.date, "%d-%m-%Y"),
+                             change_labels=soorten)
         for row, record in enumerate(records, 2):
             labels = {g.label for g in record.gebieden}
             excel.write_activity_row(
@@ -168,7 +173,7 @@ class RTR:
                 urn=record.urn,
                 werkzaamheden=record.werkzaamheden,
                 changes=[record.sttrs[l].laatste_wijziging if l in record.sttrs else ""
-                         for l in STTR_LABELS],
+                         for l in soorten],
                 gebieden=[k in labels for k in kolommen],
                 error=record.fout,
             )

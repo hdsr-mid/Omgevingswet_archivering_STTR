@@ -13,18 +13,10 @@ from datetime import datetime
 
 import xlsxwriter
 
-FIXED_HEADERS = [
-    "Activiteit",
-    "Urn",
-    "Aantal",
-    "Werkzaamheden",
-    "Wijziging Conclusie",
-    "Wijziging Melding",
-    "Wijziging Aanvraag vergunning",
-    "Wijziging Informatie",
-    "Wijziging Maatregelen",
-]
-FIXED_WIDTHS = [60, 45, 7, 50, 20, 20, 20, 20, 20]
+BASE_HEADERS = ["Activiteit", "Urn", "Aantal", "Werkzaamheden"]
+BASE_WIDTHS = [60, 45, 7, 50]
+CHANGE_WIDTH = 20
+DEFAULT_CHANGE_LABELS = ["Conclusie", "Melding", "Aanvraag vergunning", "Informatie", "Maatregelen"]
 DATE_FORMAT = "%d-%m-%Y %H:%M:%S"
 BLUE = "#538DD5"
 MATRIX_COLUMN_WIDTH = 3.5
@@ -34,14 +26,17 @@ class ExcelHandler:
     """Writes the status overview of one archiving run."""
 
     def __init__(self, workbook_path: str, gebied_columns: list[str],
-                 reference_date: datetime):
+                 reference_date: datetime, change_labels: list[str] | None = None):
         """
         Args:
             workbook_path: where the .xlsx goes
             gebied_columns: werkingsgebied names, one matrix column each
             reference_date: the peildatum; change dates are coloured by how
                 long before this date they are
+            change_labels: STTR flavours, one "Wijziging …" column each
         """
+        self.change_labels = list(change_labels or DEFAULT_CHANGE_LABELS)
+        self.headers = BASE_HEADERS + [f"Wijziging {l}" for l in self.change_labels]
         os.makedirs(os.path.dirname(workbook_path), exist_ok=True)
         self.workbook_path = workbook_path
         self.gebied_columns = gebied_columns
@@ -63,11 +58,12 @@ class ExcelHandler:
     def setup_worksheet(self):
         """Headers, column widths, rotated matrix headers and frozen panes."""
         header = self.fmt("#DDDDDD", bold=True)
-        self.worksheet.write_row(0, 0, FIXED_HEADERS, header)
-        for col, width in enumerate(FIXED_WIDTHS):
+        self.worksheet.write_row(0, 0, self.headers, header)
+        for col, width in enumerate(BASE_WIDTHS):
             self.worksheet.set_column(col, col, width)
+        self.worksheet.set_column(len(BASE_WIDTHS), len(self.headers) - 1, CHANGE_WIDTH)
 
-        first = len(FIXED_HEADERS)
+        first = len(self.headers)
         if self.gebied_columns:
             rotated = self.fmt("#DDDDDD", bold=True, rotation=90, valign="bottom")
             self.worksheet.write_row(0, first, self.gebied_columns, rotated)
@@ -76,12 +72,12 @@ class ExcelHandler:
             longest = max(len(c) for c in self.gebied_columns)
             self.worksheet.set_row(0, min(409, 15 + longest * 6))
         self.worksheet.freeze_panes(1, 1)
-        self.worksheet.autofilter(0, 0, 0, len(FIXED_HEADERS) - 1)
+        self.worksheet.autofilter(0, 0, 0, len(self.headers) - 1)
 
     def write_activity_row(self, row: int, *, name: str, urn: str,
                            werkzaamheden: list[str], changes: list[str],
                            gebieden: list[bool], error: str = ""):
-        """Write one activity on (1-based) *row*."""
+        """Write one activity on (1-based) *row*; *changes* follow change_labels."""
         r = row - 1
         plain = self.fmt()
         self.worksheet.write(r, 0, name, plain)
@@ -90,8 +86,8 @@ class ExcelHandler:
         self.worksheet.write(r, 3, error and f"FOUT: {error}" or ", ".join(werkzaamheden),
                              self.fmt("#FFC7CE") if error else plain)
         for offset, change in enumerate(changes):
-            self.write_change(r, 4 + offset, change)
-        first = len(FIXED_HEADERS)
+            self.write_change(r, len(BASE_HEADERS) + offset, change)
+        first = len(self.headers)
         for offset, present in enumerate(gebieden):
             self.worksheet.write_blank(r, first + offset, None,
                                        self.fmt(BLUE) if present else plain)

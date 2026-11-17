@@ -186,8 +186,9 @@ class Matrix(unittest.TestCase):
         written = {}
 
         class Recorder:
-            def __init__(self, path, columns, ref):
+            def __init__(self, path, columns, ref, change_labels):
                 written["columns"] = columns
+                written["change_labels"] = change_labels
                 written["rows"] = {}
 
             def write_activity_row(self, row, **kw):
@@ -226,6 +227,23 @@ class Matrix(unittest.TestCase):
                          ["06-10-2026 10:05:01", "", "", "", ""])
         self.assertEqual(self.recorder["rows"][A + "Lozen"]["changes"],
                          ["", "", "", "", "06-10-2026 10:05:01"])
+
+    def test_onbekende_soort_krijgt_eigen_kolom(self):
+        orig = FakeRtr.__init__
+
+        def init(s):
+            orig(s)
+            s.tree[A + "Maatwerk2"]["regelBeheerObjecten"] = {"Indieningsvereisten": [{
+                "identifier": "IndieningsvereistenMaatwerkvoorschrift" + A + "Maatwerk2",
+                "typering": "Indieningsvereisten",
+                "toestemming": {"code": "Maatwerkvoorschrift", "waarde": "Aanvraag maatwerkvoorschrift"}}]}
+            s.sttr[catalogus.functionele_structuur_ref(
+                OIN, "IndieningsvereistenMaatwerkvoorschrift" + A + "Maatwerk2")] = 13
+        FakeRtr.__init__ = init
+        self.addCleanup(setattr, FakeRtr, "__init__", orig)
+        self.run_archive()
+        self.assertEqual(self.recorder["change_labels"][-1], "Aanvraag maatwerkvoorschrift")
+        self.assertEqual(self.recorder["rows"][A + "Maatwerk2"]["changes"][-1], "06-10-2026 10:05:01")
 
     def test_elke_activiteit_een_keer_opgehaald(self):
         self.run_archive()
@@ -277,7 +295,8 @@ class Excel(unittest.TestCase):
                 styles = z.read("xl/styles.xml").decode()
             self.assertIn('textRotation="90"', styles)
             self.assertIn("538DD5", styles)
-            self.assertIn('r="I1"', sheet)  # 9 fixed columns: A..I
+            self.assertIn('r="I1"', sheet)  # 4 base + 5 change columns: A..I
+            self.assertIn('r="K1"', sheet)  # then the 2 matrix columns: J, K
 
 
 if __name__ == "__main__":
