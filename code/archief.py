@@ -349,9 +349,11 @@ class Archief:
                         gearchiveerd[s["sttrId"]].append(rel)
         ontbreekt = sorted(alle - set(gearchiveerd))
 
+        weg = verdwenen(h.data)
         for b in self.config.besluiten:
-            self._leesmij(b, mappen)
-        self._readme(mappen, len(alle), len(alle) - len(ontbreekt), ontbreekt)
+            self._leesmij(b, mappen, [v for v in weg if self.config.besluit_voor(
+                date.fromisoformat(v["eerst_weg"])).map == b.map])
+        self._readme(mappen, len(alle), len(alle) - len(ontbreekt), ontbreekt, weg)
         shutil.copy2(self.config.pad, os.path.join(self.uit, os.path.basename(self.config.pad)))
         # Last, so the hashes cover the README files just written.
         with open(os.path.join(self.uit, "index.csv"), "w", encoding="utf-8", newline="") as f:
@@ -372,7 +374,8 @@ class Archief:
         pad = self.map(b, submap)
         return sorted(os.listdir(pad)) if os.path.isdir(pad) else []
 
-    def _leesmij(self, b: Besluit, mappen: dict[str, dict[str, Any]]) -> None:
+    def _leesmij(self, b: Besluit, mappen: dict[str, dict[str, Any]],
+                 weg: list[dict[str, Any]]) -> None:
         regels = [f"# {self.config.regeling['titel']}: besluit van {b.besluitdatum:%d-%m-%Y}", ""]
         regels += [f"- In werking: {b.in_werking:%d-%m-%Y}"
                    + (f" (tot {b.tot:%d-%m-%Y})" if b.tot else ""),
@@ -413,10 +416,23 @@ class Archief:
                    "versies die op die dag ingingen en in geen volledige vastlegging van dit besluit "
                    "staan, zoals latere wijzigingen; `STTR/manifest.json` noemt per bestand welke "
                    "versie het vervangt en waardoor het werd vervangen.", ""]
+        if weg:
+            regels += ["## Uit de RTR verdwenen", "",
+                       "De RTR haalt activiteiten en regelbeheerobjecten uit de boom zonder hun "
+                       "STTR-versies te beëindigen. Hun bestanden staan in dit archief; dit is "
+                       "wanneer ze verdwenen (tussen twee rondes door de boom).", "",
+                       "| Wat | Activiteit | Laatst gezien | Weg op |", "|---|---|---|---|"]
+            for v in weg:
+                wat = v["soort"] + (f" ({v['label']})" if v.get("label") else "")
+                regels.append(f"| {wat} | {v['omschrijving']} (`{v['id'].split('/')[-1]}`) | "
+                              f"{date.fromisoformat(v['laatst_gezien']):%d-%m-%Y} | "
+                              f"{date.fromisoformat(v['eerst_weg']):%d-%m-%Y} |")
+            regels.append("")
         with open(self.map(b, "LEESMIJ.md"), "w", encoding="utf-8") as f:
             f.write("\n".join(regels))
 
-    def _readme(self, mappen, totaal: int, gearchiveerd: int, ontbreekt: list[str]) -> None:
+    def _readme(self, mappen, totaal: int, gearchiveerd: int, ontbreekt: list[str],
+                weg: list[dict[str, Any]]) -> None:
         bo = self.config.bestuursorgaan
         regels = [f"# Archief {self.config.regeling['titel']}", "",
                   f"{bo.naam} (OIN {bo.oin}), regeling {self.config.regeling['cvdr']}. "
@@ -443,6 +459,10 @@ class Archief:
                    "elke peildatum af te lopen en per regelbeheerobject de keten van versies te "
                    "volgen. Een regelbeheerobject dat korter dan een maand bestond tussen twee "
                    "rondes in, kan daardoor in theorie ontbreken.", "",
+                   f"{sum(1 for v in weg if v['soort'] == 'activiteit')} activiteit(en) en "
+                   f"{sum(1 for v in weg if v['soort'] == 'regelbeheerobject')} losse "
+                   "regelbeheerobject(en) verdwenen in die periode uit de RTR; het `LEESMIJ.md` "
+                   "van het besluit waaronder dat gebeurde, noemt ze.", "",
                    "`index.csv` noemt elk bestand met grootte en SHA-256.", ""]
         with open(os.path.join(self.uit, "README.md"), "w", encoding="utf-8") as f:
             f.write("\n".join(regels))
@@ -485,6 +505,47 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
                     "soort": r["label"], "omschrijving": omschrijving(r["activiteit"]),
                     "laatste_versie": versies[-1]["sttrId"]})
     return dict(uit)
+
+
+def verdwenen(historie: dict[str, Any]) -> list[dict[str, Any]]:
+    """Activities and regelbeheerobjecten that left the activity tree.
+
+    The RTR removes them from the functionele structuur without ending their
+    STTR versions, so only the walks show it: seen on one walk, absent on
+    every later one.  It happened after ``laatst_gezien`` and on or before
+    ``eerst_weg``.  A regelbeheerobject is only listed while its activity is
+    still there; otherwise the activity says it all.
+    """
+    walks = sorted(historie.get("walks", []))
+    if not walks:
+        return []
+
+    def na(datum: str) -> str | None:
+        later = [w for w in walks if w > datum]
+        return later[0] if later else None
+
+    uit = []
+    acts = historie.get("activiteiten", {})
+    for ident, a in acts.items():
+        laatst = max(a["gezien_op"])
+        if laatst < walks[-1]:
+            namen = a.get("omschrijving", {})
+            uit.append({"soort": "activiteit", "id": ident,
+                        "omschrijving": namen[max(namen)] if namen else ident,
+                        "laatst_gezien": laatst, "eerst_weg": na(laatst)})
+    for ref, r in historie.get("refs", {}).items():
+        if not r.get("gezien_op"):
+            continue
+        laatst = max(r["gezien_op"])
+        eerst_weg = na(laatst)
+        act = acts.get(r["activiteit"], {})
+        if eerst_weg and eerst_weg in act.get("gezien_op", []):
+            namen = act.get("omschrijving", {})
+            uit.append({"soort": "regelbeheerobject", "id": ref, "label": r["label"],
+                        "omschrijving": namen[max(namen)] if namen else r["activiteit"],
+                        "laatst_gezien": laatst, "eerst_weg": eerst_weg})
+    return sorted(uit, key=lambda v: (v["eerst_weg"], v["soort"] != "activiteit",
+                                      v["omschrijving"].casefold(), v.get("label", "")))
 
 
 # ── printing the regeling ────────────────────────────────────────────

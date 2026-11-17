@@ -102,6 +102,24 @@ class Verdeel(unittest.TestCase):
         self.assertIn((self.b1, "20240322_gewijzigd"), uit)
 
 
+class Verdwenen(unittest.TestCase):
+    def test_activiteit_en_los_regelbeheerobject(self):
+        h = {"walks": ["2024-01-01", "2024-02-01", "2024-03-01"],
+             "activiteiten": {
+                 "weg": {"omschrijving": {"2024-01-01": "grondwater onttrekken"}, "gezien_op": ["2024-01-01"]},
+                 "blijft": {"omschrijving": {"2024-03-01": "duiker"},
+                            "gezien_op": ["2024-01-01", "2024-02-01", "2024-03-01"]}},
+             "refs": {
+                 "r-weg": {"activiteit": "weg", "label": "Conclusie", "gezien_op": ["2024-01-01"]},
+                 "r-los": {"activiteit": "blijft", "label": "Informatie", "gezien_op": ["2024-01-01"]},
+                 "r-blijft": {"activiteit": "blijft", "label": "Conclusie",
+                              "gezien_op": ["2024-01-01", "2024-02-01", "2024-03-01"]}}}
+        uit = archief.verdwenen(h)
+        self.assertEqual([(v["soort"], v["id"], v["eerst_weg"]) for v in uit],
+                         [("activiteit", "weg", "2024-02-01"),
+                          ("regelbeheerobject", "r-los", "2024-02-01")])
+
+
 class FakeMetadata:
     """Answers /sttr/metadata from a list of (id, begin, eind) versions."""
 
