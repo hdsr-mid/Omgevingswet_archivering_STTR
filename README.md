@@ -1,53 +1,37 @@
 # Omgevingswet Archivering STTR
 
-Een Python-tool voor het archiveren van gegevens uit de Registratie Toepasbare Regels (RTR) voor Nederlandse overheden.
+Een Python-tool voor het archiveren van de toepasbare regels uit de Registratie Toepasbare Regels (RTR) voor Nederlandse overheden.
 
 ## Overzicht
 
-Deze applicatie biedt scripts om gegevens uit de RTR API op te vragen en lokaal te archiveren. De tool kan:
+De tool leest de toepasbare regels van één bestuursorgaan op een peildatum en kan:
 
-- Een Excel-overzicht genereren van activiteiten met bijbehorende werkzaamheden en regelbeheerobjecten
-- DMN-logica uit de STTR downloaden en archiveren
-- Werkingsgebieden per activiteit exporteren
+- Een Excel-overzicht genereren van alle activiteiten met hun werkzaamheden, de laatste wijziging per soort toepasbare regel en een matrix van de werkingsgebieden waarin elke activiteit geldt
+- De STTR-bestanden (DMN XML) per activiteit downloaden en archiveren
+- De werkingsgebieden met hun activiteiten exporteren
 
 ![Voorbeeld voor Hoogheemraadschap de Stichtse Rijnlanden](data/xlsx_example.PNG)
+
+## Bron: geen API-key nodig
+
+De gegevens komen uit de openbare achterkant van de RTR-viewer van het Omgevingsloket (`https://omgevingswet.overheid.nl/rtr-frontend/api`, en voor de pre-omgeving `https://pre.omgevingswet.overheid.nl/rtr-frontend/api`). Dat is precies wat iedere burger in het Omgevingsloket ziet. Er is geen API-key en er zijn geen PowerBI-exports nodig: de activiteiten worden gevonden door de activiteitenboom van het bestuursorgaan af te lopen, en de werkingsgebieden komen met hun naam rechtstreeks uit de RTR.
+
+Dit is geen officieel gepubliceerde API met een ondersteuningsafspraak. De tool vraagt daarom rustig op: standaard 2 verzoeken per seconde (`--rate`). Een volledige run voor een waterschap duurt zo enkele minuten.
+
+De RTR-client is overgenomen uit Knowledgebase-CLI (`sttr/rtr.py` en `sttr/catalogus.py`).
+
 ## Vereisten
 
-- Python 3.7 of hoger
-- API-keys voor de RTR API (zie Setup)
+- Python 3.9 of hoger
+- `xlsxwriter`
 
 ## Setup
-
-### 1. Installeer dependencies
-
-Installeer de benodigde Python-packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Of handmatig:
-
-```bash
-pip install requests xlsxwriter pandas openpyxl
-```
-
-### 2. Configureer API-keys
-
-Vraag API-keys aan voor de productie- en pre-omgeving via het [IPLO Ontwikkelaarsportaal](https://aandeslagmetdeomgevingswet.nl/ontwikkelaarsportaal/api-register/api/omgevingsdocument-toepasbaar-opvragen/).
-
-Maak vervolgens de volgende bestanden aan en plaats de keys daarin:
-
-```
-data/prod_API_key.txt
-data/pre_API_key.txt
-```
-
-**Let op:** Deze bestanden worden automatisch uitgesloten van version control via `.gitignore`.
-
 ## Gebruik
-
-### Basisgebruik
 
 ```bash
 python code/main.py
@@ -57,11 +41,19 @@ python code/main.py
 
 | Optie | Beschrijving | Standaard |
 |-------|--------------|-----------|
-| `--overheid` | Naam van de overheid (gebruik underscores voor spaties) | `Hoogheemraadschap_De_Stichtse_Rijnlanden` |
+| `--overheid` | Naam van het waterschap of de provincie (underscores voor spaties) | `Hoogheemraadschap_De_Stichtse_Rijnlanden` |
+| `--oin` | OIN van het bestuursorgaan; nodig voor gemeenten, gaat voor `--overheid` | – |
 | `--env` | Omgeving: `prod` of `pre` | `prod` |
-| `--date` | Datum in formaat DD-MM-YYYY | Vandaag |
-| `--sttr` | Archiveer DMN-logica per activiteit | Uit |
-| `--location` | Archiveer werkingsgebieden per activiteit | Uit |
+| `--date` | Peildatum in formaat DD-MM-YYYY | Vandaag |
+| `--sttr` | Download de STTR-bestanden (DMN XML) | Uit |
+| `--location` | Exporteer de werkingsgebieden per activiteit | Uit |
+| `--rate` | Verzoeken per seconde aan de RTR | `2` |
+| `--include-t5` | Neem ook de `…T5`-varianten van activiteiten mee (die publiceren normaal geen STTR) | Uit |
+
+### Welke overheden?
+
+- **Waterschappen en provincies** worden op naam gevonden, bijvoorbeeld `--overheid Waterschap_Vechtstromen`, `--overheid Wetterskip_Fryslân` of `--overheid Provincie_Zuid-Holland`. Bij een onbekende naam toont de tool welke namen er wel zijn.
+- **Gemeenten** geeft de RTR alleen op OIN prijs; gebruik `--oin`, bijvoorbeeld `--oin 00000001002220647000` (gemeente Utrecht). Het OIN staat in het OIN-register van Logius.
 
 ### Voorbeelden
 
@@ -75,47 +67,52 @@ Voor een ander waterschap:
 python code/main.py --overheid Waterschap_Vechtstromen
 ```
 
-Met specifieke datum en pre-omgeving:
+Pre-omgeving op een specifieke datum:
 ```bash
-python code/main.py --overheid Wetterskip_Fryslân --env pre --date 03-03-2024
+python code/main.py --env pre --date 03-03-2026
 ```
 
 Volledig archief inclusief STTR-bestanden en werkingsgebieden:
 ```bash
-python code/main.py --env prod --date 12-04-2024 --sttr --location
+python code/main.py --date 12-04-2025 --sttr --location
 ```
 
-**Opmerking:** De volgorde van de flags maakt niet uit. Als een optie niet wordt opgegeven, wordt de standaardwaarde gebruikt.
+## Output
+
+Alles komt in `log/`, met de peildatum, de naam van het bestuursorgaan en de omgeving in de naam:
+
+- `…_STTR_status.xlsx`: één rij per activiteit, met
+  - de werkzaamheden;
+  - per soort toepasbare regel (Conclusie, Melding, Aanvraag vergunning, Informatie, Maatregelen, en een extra kolom voor elke andere soort die de RTR teruggeeft, zoals Aanvraag maatwerkvoorschrift) de laatste wijziging, groener naarmate die dichter vóór de peildatum ligt;
+  - een blauwe cel voor elk werkingsgebied waarin de activiteit geldt. De kolomkoppen zijn de namen van de werkingsgebieden; het ambtsgebied staat vooraan als `Ambtsgebied`.
+- `…_STTR_DMN-files/` (met `--sttr`): `STTR_<sttrId>_<activiteit>_<soort>.xml`, byte voor byte zoals gepubliceerd, plus `manifest.json` met per bestand de activiteit, soort, begindatum en laatste wijziging.
+- `…_STTR_werkingsgebieden.txt` (met `--location`): per werkingsgebied de identificatie(s) en de activiteiten die er gelden.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
 
 ## Projectstructuur
 
 ```
 .
 ├── code/
-│   ├── __init__.py
-│   ├── main.py           # Hoofdprogramma
-│   ├── commands.py       # Command-line argument parsing
-│   ├── rtr.py           # RTR API interactie en archivering
-│   ├── excel.py         # Excel bestandsgeneratie
-│   └── powerbi.py       # PowerBI data verwerking
+│   ├── main.py          # Hoofdprogramma
+│   ├── commands.py      # Command-line opties
+│   ├── rtr.py           # Archivering: activiteiten lezen, outputs schrijven
+│   ├── rtr_client.py    # Client voor de RTR (geen API-key)
+│   ├── catalogus.py     # Bestuursorgaan vinden, activiteitenboom aflopen
+│   ├── excel.py         # Excel-statusoverzicht
+│   └── vertrouwen.py    # HTTPS op Windows met een nog onbekend root-certificaat
+├── tests/
 ├── data/
-│   ├── prod_API_key.txt # API-key voor productie (niet in git)
-│   ├── pre_API_key.txt  # API-key voor pre-omgeving (niet in git)
-│   └── *.xlsx           # PowerBI Excel bestanden
-├── log/                 # Gegenereerde log bestanden (niet in git)
-├── .gitignore
-├── LICENSE
-├── README.md
-└── requirements.txt
+│   └── xlsx_example.PNG
+├── log/                 # Gegenereerde output (niet in git)
+├── requirements.txt
+└── README.md
 ```
-
-## Output
-
-De tool genereert verschillende outputs:
-
-- **Excel-bestanden**: Status overzicht van activiteiten met werkzaamheden en wijzigingen
-- **DMN-bestanden** (met `--sttr`): XML-bestanden met STTR-logica per activiteit
-- **Werkingsgebieden** (met `--location`): Tekstbestand met mapping van werkingsgebieden naar activiteiten
 
 ## Licentie
 
@@ -124,7 +121,3 @@ Dit project is gelicenseerd onder de MIT License - zie het [LICENSE](LICENSE) be
 ## Bijdragen
 
 Bijdragen zijn welkom! Zie [CONTRIBUTING.md](CONTRIBUTING.md) voor richtlijnen.
-
-## Contact
-
-Voor vragen over de API of om API-keys aan te vragen, bezoek het [IPLO Ontwikkelaarsportaal](https://aandeslagmetdeomgevingswet.nl/ontwikkelaarsportaal/api-register/api/omgevingsdocument-toepasbaar-opvragen/).
