@@ -89,6 +89,21 @@ class Config(unittest.TestCase):
             self.assertEqual([x[0]["bestand"], x[1]["identiek_aan"], x[2]["bestand"]],
                              ["Ontwerp_20230829/bijlagen/x.pdf", "Ontwerp_20230829/bijlagen/x.pdf", None])
 
+    def test_blad_per_bestuurslaag(self):
+        self.assertEqual(archief.blad("wsb-2025-90002"), "Waterschapsblad")
+        self.assertEqual(archief.blad("prb-2025-90003"), "Provinciaal blad")
+        self.assertEqual(archief.blad("gmb-2025-90004"), "Gemeenteblad")
+        for pub_id in ("stcrt-2025-90005", "bgr-2025-90006", "wsb2025"):
+            with self.assertRaises(ValueError):
+                archief.blad(pub_id)
+
+    def test_onbekend_blad_is_fout(self):
+        b = besluit("2025-07-15", "2025-07-24", [], "wsb-2025-90002")
+        b["ontwerp"] = [{"id": "xyz-2025-90001", "soort": "ontwerp", "titel": "t"}]
+        b["zichtbaar_in_dso"]["ontwerp"] = "2025-05-14"
+        with self.assertRaisesRegex(ValueError, "xyz-2025-90001: onbekend blad 'xyz'"):
+            config([b])
+
     def test_peildatum_buiten_periode_is_fout(self):
         with self.assertRaisesRegex(ValueError, "buiten de periode"):
             config([besluit("2023-12-20", "2024-01-01", ["2025-08-08"], "wsb-1"),
@@ -447,6 +462,23 @@ class ReadmeTxt(unittest.TestCase):
         a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
         self.assertIn("\tinspraakrapport\n\t\tDefinitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
+
+    def test_blad_van_de_publicatie(self):
+        for voorvoegsel, naam in (("wsb", "Waterschapsblad"), ("prb", "Provinciaal blad"),
+                                  ("gmb", "Gemeenteblad")):
+            with self.subTest(voorvoegsel):
+                pub = f"{voorvoegsel}-2025-90007"
+                b = besluit("2025-03-04", "2025-03-06", [], pub)
+                a, c = self.maak([b], [f"Definitief_20250304/{pub}_besluit.pdf"])
+                with open(a.map(c.besluiten[0], "bijlagen.json"), "w", encoding="utf-8") as f:
+                    json.dump({"publicaties": {pub: {"gepubliceerd": "2025-03-05", "bijlagen": []}}}, f)
+                a._readme_txt(c.besluiten[0], {}, [])
+                t = self.tekst(a, c.besluiten[0])
+                self.assertIn(f"\t\tt, {naam} 05-03-2025\n", t)
+                self.assertIn(f"Publicaties komen uit het {naam} (zoek.officielebekendmakingen.nl)",
+                              " ".join(t.split()))
+                for ander in {"Waterschapsblad", "Provinciaal blad", "Gemeenteblad"} - {naam}:
+                    self.assertNotIn(ander, t)
 
 
 if __name__ == "__main__":

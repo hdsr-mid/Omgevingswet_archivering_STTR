@@ -53,7 +53,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from fnmatch import fnmatch
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -76,6 +76,16 @@ CVDR_TOESTAND = "https://lokaleregelgeving.overheid.nl/{regeling}/{toestand}"
 USER_AGENT = "rtr-archivering/2.0 (python-urllib)"
 STAPPEN = ("publicaties", "bijlagen", "regeling", "rtr", "wijzigingen", "index")
 GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
+# The blad a decentralised government publishes in, by the prefix of the publication id.
+BLADEN = {"wsb": "Waterschapsblad", "prb": "Provinciaal blad", "gmb": "Gemeenteblad"}
+
+
+def blad(pub_id: str) -> str:
+    """``wsb-2025-17997`` -> ``Waterschapsblad``."""
+    voorvoegsel = pub_id.split("-", 1)[0]
+    if voorvoegsel not in BLADEN:
+        raise ValueError(f"{pub_id}: onbekend blad '{voorvoegsel}' (bekend: {', '.join(BLADEN)})")
+    return BLADEN[voorvoegsel]
 
 
 # ── configuration ────────────────────────────────────────────────────
@@ -146,6 +156,8 @@ def lees_config(pad: str) -> Config:
         for b in ruw["besluiten"]]
     for b in besluiten:
         for fase, docs in (("ontwerp", b.ontwerp), ("besluit", b.definitief)):
+            for doc in docs:
+                blad(doc["id"])
             if docs and fase not in b.zichtbaar:
                 raise ValueError(f"{b.map}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
                                  f"{fase} zichtbaar werd in het DSO; de map wordt ernaar genoemd)")
@@ -722,7 +734,7 @@ class Archief:
 
         def publicatie(regels: list[str], submap: str, doc: dict[str, str]) -> None:
             p = bijl.get(doc["id"], {})
-            datum = (f", Waterschapsblad {date.fromisoformat(p['gepubliceerd']):%d-%m-%Y}"
+            datum = (f", {blad(doc['id'])} {date.fromisoformat(p['gepubliceerd']):%d-%m-%Y}"
                      if p.get("gepubliceerd") else "")
             rel = f"{b.submap(submap)}/{doc['id']}_{doc['soort']}.pdf"
             if rel in alle:
@@ -847,9 +859,10 @@ class Archief:
         for naam, inhoud in secties:
             if inhoud:  # what was not published is not mentioned
                 regels += [T + naam] + inhoud + [""]
+        bladen = " en het ".join(dict.fromkeys(blad(d["id"]) for d in b.ontwerp + b.definitief))
         regels += ["Toelichting"] + [textwrap.fill(p, 100, initial_indent=T, subsequent_indent=T) + "\n"
                                      for p in (
-            "Publicaties komen uit het Waterschapsblad (zoek.officielebekendmakingen.nl), de hele "
+            f"Publicaties komen uit het {bladen} (zoek.officielebekendmakingen.nl), de hele "
             "regeling per toestand uit lokaleregelgeving.overheid.nl. Kaarten zijn de authentieke "
             "GML van de werkingsgebieden (GIO's) die een publicatie vaststelt; bijlagen zijn de "
             "informatieobjecten (PDF) en externe bijlagen die ze meestuurt. bijlagen.json noemt per "
