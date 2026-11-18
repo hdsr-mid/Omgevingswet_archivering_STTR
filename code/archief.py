@@ -57,6 +57,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import catalogus
 import vertrouwen
 from catalogus import Bestuursorgaan
 from rtr import RTR
@@ -169,7 +170,12 @@ def lees_config(pad: str) -> Config:
         if buiten:
             raise ValueError(f"{b.map}: peildata {buiten} vallen buiten de periode "
                              f"van het besluit ({b.in_werking} tot {b.tot})")
-    return Config(pad, Bestuursorgaan(bo["naam"], bo["oin"], (bo["root"],)),
+    # root (one) or roots (a list); neither: found from the OIN when the RTR is needed.
+    roots = bo.get("roots", [])
+    roots = [roots] if isinstance(roots, str) else list(roots)
+    if bo.get("root"):
+        roots.insert(0, bo["root"])
+    return Config(pad, Bestuursorgaan(bo["naam"], bo["oin"], tuple(dict.fromkeys(roots))),
                   ruw["regeling"], ruw.get("omgeving", "prod"), besluiten)
 
 
@@ -315,6 +321,27 @@ class Archief:
 
     def map(self, besluit: Besluit, *delen: str) -> str:
         return os.path.join(self.uit, besluit.map, *delen)
+
+    def vind_roots(self, tot: date) -> None:
+        """The roots of the bestuursorgaan's activity tree, from its OIN, when the config names none.
+
+        Asked on every in-werking date up to *tot* and on *tot* itself, so a
+        tree that was started anew later is walked as well.
+        """
+        bo = self.config.bestuursorgaan
+        if bo.roots:
+            return
+        roots: dict[str, None] = {}
+        for d in sorted({b.in_werking for b in self.config.besluiten if b.in_werking <= tot} | {tot}):
+            try:
+                roots.update(dict.fromkeys(catalogus.zoek_op_oin(self.client, bo.oin, d.isoformat()).roots))
+            except catalogus.CatalogusFout as exc:
+                log.info("%s", exc)
+        if not roots:
+            raise catalogus.CatalogusFout(f"Geen activiteitenboom gevonden voor OIN {bo.oin}; "
+                                          f"zet 'root' in {self.config.pad}")
+        self.config.bestuursorgaan = Bestuursorgaan(bo.naam, bo.oin, tuple(roots))
+        log.info("%s: root(s) %s", bo.naam, ", ".join(roots))
 
     def hernoem_mappen(self) -> None:
         """Give ``Ontwerp`` and ``Definitief`` of an earlier archive their current name.
@@ -1115,6 +1142,8 @@ def main(argv=None) -> int:
     archief = Archief(config, args.uit, client, werkmap=args.werkmap)
     archief.hernoem_mappen()
     tot = date.fromisoformat(args.tot)
+    if {"rtr", "wijzigingen"} & set(stappen):
+        archief.vind_roots(tot)
 
     if "publicaties" in stappen:
         archief.publicaties()

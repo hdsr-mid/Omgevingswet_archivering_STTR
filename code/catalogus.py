@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from rtr_client import RtrClient
+from rtr_client import RtrClient, RtrError
 
 log = logging.getLogger("rtr.catalogus")
 
@@ -218,6 +218,8 @@ def enumereer_activiteiten(
     walk asks each node for its children anyway, and that same answer says
     which regelbeheerobjecten the node carries — so the STTR flavours come
     for free.  Roots are included: they are activities in their own right.
+    A root the RTR does not know on *datum* (HTTP 404: the tree started
+    later, or was replaced) is skipped, as long as one of them is there.
     """
     oin = bestuursorgaan.oin
     suffixen = tuple(overgeslagen_suffix)
@@ -225,13 +227,21 @@ def enumereer_activiteiten(
     gevonden: dict[str, Activiteit] = {}
     ouders: dict[str, str] = {}
     wachtrij: deque[str] = deque(bestuursorgaan.roots)
+    afwezig: list[str] = []
 
     while wachtrij:
         huidig = wachtrij.popleft()
         if huidig in gezien:
             continue
         gezien.add(huidig)
-        knoop = client.relations_node(huidig, oin, datum)
+        try:
+            knoop = client.relations_node(huidig, oin, datum)
+        except RtrError as exc:
+            if exc.status != 404 or huidig not in bestuursorgaan.roots:
+                raise
+            afwezig.append(huidig)
+            log.info("Root %s bestaat niet op %s", huidig, datum)
+            continue
 
         if not _overslaan(huidig, suffixen):
             rbos = {}
@@ -256,6 +266,9 @@ def enumereer_activiteiten(
             ouders.setdefault(identifier, huidig)
             wachtrij.append(identifier)
 
+    if bestuursorgaan.roots and len(afwezig) == len(set(bestuursorgaan.roots)):
+        raise CatalogusFout(f"Geen van de roots van {bestuursorgaan.naam} bestaat op "
+                            f"{datum}: {', '.join(afwezig)}")
     log.info("Activiteiten gevonden: %d (%d knopen bezocht)",
              len(gevonden), len(gezien))
     return sorted(gevonden.values(),

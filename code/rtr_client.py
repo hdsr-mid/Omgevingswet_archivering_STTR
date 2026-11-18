@@ -36,7 +36,14 @@ _STRUCTUUR = "/functionele-structuur/structuur"
 
 
 class RtrError(RuntimeError):
-    """The RTR could not be reached, or answered something unusable."""
+    """The RTR could not be reached, or answered something unusable.
+
+    ``status`` is the HTTP status of a 4xx answer (404: not there on that date).
+    """
+
+    def __init__(self, bericht: str, status: int | None = None):
+        super().__init__(bericht)
+        self.status = status
 
 
 class RtrClient:
@@ -88,7 +95,8 @@ class RtrClient:
                 # 4xx is our mistake and will not improve by asking again.
                 if 400 <= exc.code < 500:
                     raise RtrError(
-                        f"RTR gaf HTTP {exc.code} voor {url}") from exc
+                        f"RTR gaf HTTP {exc.code} voor {url}",
+                        status=exc.code) from exc
                 last = exc
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last = exc

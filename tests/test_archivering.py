@@ -88,6 +88,7 @@ class FakeRtr:
         self.sttr = {catalogus.functionele_structuur_ref(OIN, "Conclusie" + A + "Duiker"): 11,
                      catalogus.functionele_structuur_ref(OIN, "Maatregelen" + A + "Lozen"): 12}
         self.kapot = set()
+        self.fout_in_boom = {}  # identifier -> HTTP status of relations_node
 
     def _tel(self):
         self.requests_made += 1
@@ -100,6 +101,9 @@ class FakeRtr:
 
     def relations_node(self, identifier, oin, datum):
         self._tel()
+        if identifier in self.fout_in_boom:
+            status = self.fout_in_boom[identifier]
+            raise RtrError(f"HTTP {status}", status=status if status < 500 else None)
         return {"identifier": identifier, **self.tree[identifier]}
 
     def details(self, identifier, datum):
@@ -174,6 +178,27 @@ class Boom(unittest.TestCase):
         self.assertEqual(list(acts[A + "Lozen"].regelbeheerobjecten), ["Conclusie", "Maatregelen"])
         with_t5 = catalogus.enumereer_activiteiten(rtr_, b, datum="2026-11-17", overgeslagen_suffix=())
         self.assertIn(A + "DuikerT5", {a.identifier for a in with_t5})
+
+    def test_root_die_er_op_die_dag_niet_is(self):
+        rtr_ = FakeRtr()
+        later = "nl.imow-ws9901.activiteit.NieuweBoom"
+        rtr_.fout_in_boom = {later: 404}
+        b = catalogus.Bestuursorgaan("Hoogheemraadschap De Proefpolders", OIN, (later, ROOT))
+        acts = {a.identifier for a in catalogus.enumereer_activiteiten(rtr_, b, datum="2026-11-17")}
+        self.assertIn(A + "Lozen", acts)
+        self.assertNotIn(later, acts)
+        # None of the roots there: no silent empty walk.
+        with self.assertRaisesRegex(catalogus.CatalogusFout, "Geen van de roots"):
+            catalogus.enumereer_activiteiten(rtr_, catalogus.Bestuursorgaan("x", OIN, (later,)),
+                                             datum="2026-11-17")
+
+    def test_andere_fout_stopt_de_boom(self):
+        rtr_ = FakeRtr()
+        b = catalogus.Bestuursorgaan("Hoogheemraadschap De Proefpolders", OIN, (ROOT,))
+        for fout in ({ROOT: 500}, {A + "Lozen": 404}):  # a 404 below the root is not skipped
+            rtr_.fout_in_boom = fout
+            with self.subTest(fout), self.assertRaises(RtrError):
+                catalogus.enumereer_activiteiten(rtr_, b, datum="2026-11-17")
 
 
 class Matrix(unittest.TestCase):

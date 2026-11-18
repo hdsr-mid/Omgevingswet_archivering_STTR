@@ -14,15 +14,16 @@ from datetime import date
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "code"))
 
 import archief  # noqa: E402
+import catalogus  # noqa: E402
 from catalogus import Bestuursorgaan  # noqa: E402
 from versiehistorie import Versiehistorie, maandelijks  # noqa: E402
 
 BO = Bestuursorgaan("Waterschap Voorbeeld", "99000000000000000001", ("root",))
 
 
-def config(besluiten):
+def config(besluiten, bo=None):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-        json.dump({"bestuursorgaan": {"naam": BO.naam, "oin": BO.oin, "root": "root"},
+        json.dump({"bestuursorgaan": bo or {"naam": BO.naam, "oin": BO.oin, "root": "root"},
                    "regeling": {"cvdr": "CVDR1", "titel": "Verordening"},
                    "besluiten": besluiten}, f)
     try:
@@ -108,6 +109,69 @@ class Config(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "buiten de periode"):
             config([besluit("2023-12-20", "2024-01-01", ["2025-08-08"], "wsb-1"),
                     besluit("2025-07-15", "2025-07-24", [], "wsb-2")])
+
+
+class Roots(unittest.TestCase):
+    """The activity tree's roots: from the config, or from the OIN."""
+
+    class FakeCatalogus:
+        """Answers the national node for a waterschap whose tree was replaced on 2025-07-24."""
+
+        def __init__(self, roots_op):
+            self.roots_op, self.gevraagd = roots_op, []
+
+        def relations(self, knoop, oin, datum):
+            self.gevraagd.append(datum)
+            if knoop != catalogus.NATIONALE_KNOPEN["waterschap"]:
+                return []
+            return [{"identifier": r, "bestuursorgaanOin": oin} for r in self.roots_op.get(datum, [])]
+
+        def details(self, identifier, datum):
+            return {"bestuursOrgaanNaam": BO.naam}
+
+    def maak(self, bo, roots_op):
+        c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001"),
+                    besluit("2025-07-15", "2025-07-24", [], "wsb-2025-90002")],
+                   bo=dict(naam=BO.naam, oin=BO.oin, **bo))
+        client = self.FakeCatalogus(roots_op)
+        return archief.Archief(c, "nergens", client), client
+
+    def test_root_roots_of_geen(self):
+        for bo, verwacht in (({"root": "r1"}, ("r1",)), ({"roots": ["r1", "r2"]}, ("r1", "r2")),
+                             ({"root": "r1", "roots": ["r2", "r1"]}, ("r1", "r2")),
+                             ({"roots": "r1"}, ("r1",)), ({}, ())):
+            with self.subTest(bo):
+                c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")],
+                           bo=dict(naam=BO.naam, oin=BO.oin, **bo))
+                self.assertEqual(c.bestuursorgaan.roots, verwacht)
+
+    def test_uit_het_oin_op_elke_inwerkingtreding(self):
+        a, client = self.maak({}, {"2024-01-01": ["r1"], "2025-07-24": ["r1", "r2"], "2026-11-18": ["r2"]})
+        a.vind_roots(date(2026, 11, 18))
+        self.assertEqual(a.config.bestuursorgaan.roots, ("r1", "r2"))
+        self.assertEqual(set(client.gevraagd), {"2024-01-01", "2025-07-24", "2026-11-18"})
+
+    def test_datum_zonder_boom_wordt_overgeslagen(self):
+        a, _ = self.maak({}, {"2026-11-18": ["r2"]})
+        a.vind_roots(date(2026, 11, 18))
+        self.assertEqual(a.config.bestuursorgaan.roots, ("r2",))
+
+    def test_niet_na_tot(self):
+        a, client = self.maak({}, {"2024-01-01": ["r1"], "2025-07-24": ["r2"]})
+        a.vind_roots(date(2025, 1, 1))
+        self.assertEqual(a.config.bestuursorgaan.roots, ("r1",))
+        self.assertNotIn("2025-07-24", client.gevraagd)
+
+    def test_geen_boom_is_fout(self):
+        a, _ = self.maak({}, {})
+        with self.assertRaisesRegex(catalogus.CatalogusFout, "zet 'root'"):
+            a.vind_roots(date(2026, 11, 18))
+
+    def test_root_in_config_vraagt_niets(self):
+        a, client = self.maak({"root": "r1"}, {"2026-11-18": ["r2"]})
+        a.vind_roots(date(2026, 11, 18))
+        self.assertEqual(a.config.bestuursorgaan.roots, ("r1",))
+        self.assertEqual(client.gevraagd, [])
 
 
 class Verdeel(unittest.TestCase):
