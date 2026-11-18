@@ -68,12 +68,17 @@ Voor nieuwe functionaliteiten:
 
 ## Testing
 
-Hoewel er momenteel geen formele test suite is, test je code handmatig:
-- Test met verschillende overheden
-- Test met verschillende datums
+De tests draaien offline tegen een nagebootste RTR:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Test daarnaast met de echte RTR:
+- Test met verschillende overheden (`--overheid`, en een gemeente via `--oin`)
+- Test met verschillende datums en met `--env pre`
 - Test met verschillende combinaties van flags (`--sttr`, `--location`)
 - Controleer of de gegenereerde Excel-bestanden correct zijn
-- Verifieer dat API-calls succesvol zijn
 
 ## Commit Messages
 

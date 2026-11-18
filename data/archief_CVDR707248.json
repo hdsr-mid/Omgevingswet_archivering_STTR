@@ -1,0 +1,133 @@
+{
+  "omschrijving": "Archief van de Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden (CVDR707248): per definitief besluit de publicaties, de hele regeling en elke versie van de toepasbare regels (STTR).",
+  "bestuursorgaan": {
+    "naam": "Hoogheemraadschap De Stichtse Rijnlanden",
+    "oin": "00000001802139097000",
+    "root": "nl.imow-ws0636.activiteit.ActInWaterschapsVerordWs"
+  },
+  "regeling": {
+    "cvdr": "CVDR707248",
+    "titel": "Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"
+  },
+  "omgeving": "prod",
+  "besluiten": [
+    {
+      "besluitdatum": "2023-12-20",
+      "naam": "waterschapsverordening",
+      "in_werking": "2024-01-01",
+      "zichtbaar_in_dso": {"ontwerp": "2023-08-29", "besluit": "2023-12-21"},
+      "ontwerp": [
+        {"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "ONTWERP Waterschapsverordening"},
+        {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening",
+         "opmerking": "Kennisgeving met als externe bijlagen het ontwerp, de Onderhoudsverordening en de drie leggers."},
+        {"id": "wsb-2023-10713", "soort": "kennisgeving", "titel": "Start inspraak Ontwerp Waterschapsverordening",
+         "opmerking": "Dezelfde kennisgeving, via de LVBB bij het ontwerp (wsb-2023-10605)."},
+        {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening",
+         "opmerking": "Opnieuw gepubliceerd: dezelfde tekst en dezelfde externe bijlagen als wsb-2023-10592."}
+      ],
+      "definitief": [
+        {"id": "wsb-2023-15782", "soort": "besluit", "titel": "Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"},
+        {"id": "wsb-2023-16481", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024 (herpublicatie na onvolledige publicatie)"},
+        {"id": "wsb-2023-16532", "soort": "kennisgeving", "titel": "Vaststellingsbesluit waterschapsverordening en bijbehorende besluiten"}
+      ],
+      "toestanden": [
+        {"nummer": 1, "geldig_vanaf": "2024-01-01"},
+        {"nummer": 2, "geldig_vanaf": "2024-01-02"}
+      ],
+      "rtr_peildata": ["2024-01-15", "2024-03-28"]
+    },
+    {
+      "besluitdatum": "2024-12-17",
+      "naam": "wijzigingsbesluit",
+      "in_werking": "2025-01-01",
+      "zichtbaar_in_dso": {"ontwerp": "2024-10-17", "besluit": "2024-12-20"},
+      "ontwerp": [
+        {"id": "wsb-2024-22028", "soort": "ontwerp", "titel": "Ontwerp Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"},
+        {"id": "wsb-2024-22126", "soort": "kennisgeving", "titel": "Kennisgeving terinzagelegging Ontwerp Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"}
+      ],
+      "definitief": [
+        {"id": "wsb-2024-27541", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"}
+      ],
+      "toestanden": [{"nummer": 3, "geldig_vanaf": "2025-01-01"}],
+      "rtr_peildata": ["2025-01-20"]
+    },
+    {
+      "besluitdatum": "2025-01-30",
+      "naam": "technische-wijziging",
+      "in_werking": "2025-01-31",
+      "zichtbaar_in_dso": {"besluit": "2025-01-31"},
+      "ontwerp": [],
+      "definitief": [
+        {"id": "wsb-2025-2364", "soort": "besluit", "titel": "Technische wijziging Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"}
+      ],
+      "toestanden": [{"nummer": 4, "geldig_vanaf": "2025-01-31"}],
+      "rtr_peildata": ["2025-02-14"],
+      "opmerking": "Technische wijziging (nieuwe versies van de informatieobjecten/werkingsgebieden), zonder ontwerp en inspraak."
+    },
+    {
+      "besluitdatum": "2025-07-15",
+      "naam": "wijzigingsbesluit-h2-3-4",
+      "in_werking": "2025-07-24",
+      "zichtbaar_in_dso": {"ontwerp": "2025-05-14", "besluit": "2025-07-24"},
+      "ontwerp": [
+        {"id": "wsb-2025-11894", "soort": "ontwerp", "titel": "Ontwerp wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024 (hoofdstukken 2, 3 en 4)"},
+        {"id": "wsb-2025-12517", "soort": "kennisgeving", "titel": "Kennisgeving terinzagelegging Ontwerp wijzigingsbesluit Waterschapsverordening hoofdstukken 2, 3, en 4"},
+        {"id": "wsb-2025-12605", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-wijzigingsbesluit beleidsregels bij de Waterschapsverordening, profielenlegger en werkingsgebieden van de Waterschapsverordening",
+         "opmerking": "Kondigt de inspraak aan op de ontwerp-wijziging van de werkingsgebieden (bijlage II van de verordening), samen met de beleidsregels en de profielenlegger; de externe bijlage zijn de beleidsregels, een aparte regeling."}
+      ],
+      "definitief": [
+        {"id": "wsb-2025-17997", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden inhoudende de wijziging van hoofdstuk 2, 3 en 4"}
+      ],
+      "toestanden": [{"nummer": 5, "geldig_vanaf": "2025-07-24"}],
+      "rtr_peildata": ["2025-08-01", "2025-08-08"],
+      "opmerking": "De toepasbare regels kwamen in twee volledige rondes: 29-31 juli (vastgelegd op 1 augustus) en 6-7 augustus (vastgelegd op 8 augustus)."
+    },
+    {
+      "besluitdatum": "2025-10-08",
+      "naam": "wijzigingsbesluit-h1-5",
+      "in_werking": "2025-11-04",
+      "zichtbaar_in_dso": {"ontwerp": "2025-05-14", "besluit": "2025-11-04"},
+      "ontwerp": [
+        {"id": "wsb-2025-11882", "soort": "ontwerp", "titel": "Ontwerp wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden (hoofdstukken 1 en 5)"},
+        {"id": "wsb-2025-12495", "soort": "kennisgeving", "titel": "Kennisgeving terinzagelegging Ontwerp wijzigingsbesluit Waterschapsverordening hoofdstukken 1 en 5"}
+      ],
+      "definitief": [
+        {"id": "wsb-2025-26929", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden inhoudende de wijziging van hoofdstuk 1 en 5"}
+      ],
+      "toestanden": [{"nummer": 6, "geldig_vanaf": "2025-11-04"}],
+      "rtr_peildata": ["2025-11-04"],
+      "opmerking": "Bij dit besluit zijn geen nieuwe toepasbare regels gepubliceerd; de vastlegging op 4 november toont de regels die toen golden."
+    },
+    {
+      "besluitdatum": "2026-05-05",
+      "naam": "wijzigingsbesluit",
+      "in_werking": "2026-05-20",
+      "zichtbaar_in_dso": {"ontwerp": "2025-12-23", "besluit": "2026-05-12"},
+      "ontwerp": [
+        {"id": "wsb-2025-31807", "soort": "ontwerp", "titel": "Ontwerp Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"},
+        {"id": "wsb-2025-31879", "soort": "kennisgeving", "titel": "Kennisgeving Ontwerp Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"}
+      ],
+      "definitief": [
+        {"id": "wsb-2026-12499", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"}
+      ],
+      "toestanden": [{"nummer": 7, "geldig_vanaf": "2026-05-20"}],
+      "rtr_peildata": ["2026-05-28", "2026-06-10"],
+      "opmerking": "De toepasbare regels kwamen van 27 mei tot 9 juni; 28 mei legt de eerste ronde vast, 10 juni de volledige."
+    },
+    {
+      "besluitdatum": "2026-09-22",
+      "naam": "wijzigingsbesluit",
+      "in_werking": "2026-10-07",
+      "zichtbaar_in_dso": {"ontwerp": "2026-06-05", "besluit": "2026-09-29"},
+      "ontwerp": [
+        {"id": "wsb-2026-14697", "soort": "ontwerp", "titel": "Ontwerp Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"},
+        {"id": "wsb-2026-14887", "soort": "kennisgeving", "titel": "Kennisgeving ontwerp-wijzigingsbesluit waterschapsverordening"}
+      ],
+      "definitief": [
+        {"id": "wsb-2026-25582", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"}
+      ],
+      "toestanden": [{"nummer": 8, "geldig_vanaf": "2026-10-07"}],
+      "rtr_peildata": ["2026-10-10"]
+    }
+  ]
+}

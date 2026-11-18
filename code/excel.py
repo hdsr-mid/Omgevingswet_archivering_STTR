@@ -1,145 +1,141 @@
 """
-Excel handler for RTR archiving output.
+Excel status overview for RTR archiving.
 
-This module handles the creation and formatting of Excel workbooks that contain
-RTR activity data, including color-coded cells based on modification dates.
+One row per activity: its werkzaamheden, the last change date of each STTR
+(coloured by how recent it is relative to the peildatum) and a matrix with a
+blue cell for every werkingsgebied the activity applies in.
 """
+
+from __future__ import annotations
 
 import os
 from datetime import datetime
+
 import xlsxwriter
 
-HEADER_INDICES_BEFORE_WERKINGSGEBIEDEN = 8
-AANTAL_WERKZAAMHEDEN_COLUMN_INDEX = 2
+BASE_HEADERS = ["Activiteit", "Urn", "Aantal", "Werkzaamheden"]
+BASE_WIDTHS = [60, 45, 7, 50]
+CHANGE_WIDTH = 20
+DEFAULT_CHANGE_LABELS = ["Conclusie", "Melding", "Aanvraag vergunning", "Informatie", "Maatregelen"]
+DATE_FORMAT = "%d-%m-%Y %H:%M:%S"
+BLUE = "#538DD5"
+MATRIX_COLUMN_WIDTH = 3.5
+
 
 class ExcelHandler:
-    """Handles Excel workbook creation and data writing for RTR archiving."""
-    
-    def __init__(self, bestuursorgaan, base_dir, env, date, headers):
+    """Writes the status overview of one archiving run."""
+
+    def __init__(self, workbook_path: str, gebied_columns: list[str],
+                 reference_date: datetime, change_labels: list[str] | None = None,
+                 change_header: str = "Wijziging"):
         """
-        Initialize the Excel handler and create a new workbook.
-        
         Args:
-            bestuursorgaan (str): Name of the government body
-            base_dir (str): Base directory for output files
-            env (str): Environment ('prod' or 'pre')
-            date (str): Date in DD-MM-YYYY format
-            headers (list): Column headers for the Excel sheet
+            workbook_path: where the .xlsx goes
+            gebied_columns: werkingsgebied names, one matrix column each
+            reference_date: the peildatum; change dates are coloured by how
+                long before this date they are
+            change_labels: STTR flavours, one "<change_header> …" column each
+            change_header: "Wijziging" (last change) or "Geldig vanaf"
         """
-        self.headers = headers
-        self.workbook_path = self.generate_file_path(date, bestuursorgaan, env, "status", base_dir, extension="xlsx")
-        self.workbook = xlsxwriter.Workbook(self.workbook_path)
-        self.worksheet = self.workbook.add_worksheet()
-        self.cell_format = self.create_format('white', bold=False, text_wrap=False, border=True)
-        self.blue_format = self.create_format('#538DD5', bold=False, text_wrap=False, border=True)
+        self.change_labels = list(change_labels or DEFAULT_CHANGE_LABELS)
+        self.headers = BASE_HEADERS + [f"{change_header} {l}" for l in self.change_labels]
+        os.makedirs(os.path.dirname(workbook_path), exist_ok=True)
+        self.workbook_path = workbook_path
+        self.gebied_columns = gebied_columns
+        self.reference_date = reference_date
+        self.workbook = xlsxwriter.Workbook(workbook_path)
+        self.worksheet = self.workbook.add_worksheet("Status")
+        self._formats: dict[tuple, object] = {}
         self.setup_worksheet()
 
-    def create_format(self, color, bold, text_wrap, border):
-        """Create a cell format with specified styling."""
-        return self.workbook.add_format({
-            'bg_color': color,
-            'text_wrap': text_wrap,
-            'align': 'left',
-            'valign': 'top',
-            'bold': bold,
-            'border': border,
-        })
+    def fmt(self, color: str = "white", **extra):
+        """A cached cell format; xlsxwriter limits how many a workbook has."""
+        key = (color, tuple(sorted(extra.items())))
+        if key not in self._formats:
+            self._formats[key] = self.workbook.add_format({
+                "bg_color": color, "align": "left", "valign": "top",
+                "border": 1, **extra})
+        return self._formats[key]
 
     def setup_worksheet(self):
-        """Set up the worksheet with headers, column widths, and frozen panes."""
-        header_format = self.create_format('#DDDDDD', bold=True, text_wrap=False, border=True)
-        self.worksheet.write_row('A1', self.headers, header_format)
-        self.adjust_column_widths()
+        """Headers, column widths, rotated matrix headers and frozen panes."""
+        header = self.fmt("#DDDDDD", bold=True, text_wrap=True, valign="bottom")
+        self.worksheet.write_row(0, 0, self.headers, header)
+        for col, width in enumerate(BASE_WIDTHS):
+            self.worksheet.set_column(col, col, width)
+        self.worksheet.set_column(len(BASE_WIDTHS), len(self.headers) - 1, CHANGE_WIDTH)
+
+        first = len(self.headers)
+        if self.gebied_columns:
+            rotated = self.fmt("#DDDDDD", bold=True, rotation=90, valign="bottom",
+                               font_size=9)
+            self.worksheet.write_row(0, first, self.gebied_columns, rotated)
+            self.worksheet.set_column(first, first + len(self.gebied_columns) - 1,
+                                      MATRIX_COLUMN_WIDTH)
+            # Excel caps a row at 409 points; at 9 points a character takes
+            # about 5, which fits names of up to ~75 characters.
+            longest = max(len(c) for c in self.gebied_columns)
+            self.worksheet.set_row(0, min(409, 15 + longest * 5))
         self.worksheet.freeze_panes(1, 1)
+        self.worksheet.autofilter(0, 0, 0, len(self.headers) - 1)
 
-    def adjust_column_widths(self):
-        """Adjust column widths based on header lengths."""
-        for i, header in enumerate(self.headers, 1):
-            padding = 4
-            column_width = 4 if i > HEADER_INDICES_BEFORE_WERKINGSGEBIEDEN else len(header) + padding
-            self.worksheet.set_column(i - 1, i - 1, column_width)
+    def write_activity_row(self, row: int, *, name: str, urn: str,
+                           werkzaamheden: list[str], changes: list[str],
+                           gebieden: list[bool], error: str = ""):
+        """Write one activity on (1-based) *row*; *changes* follow change_labels."""
+        r = row - 1
+        plain = self.fmt()
+        self.worksheet.write(r, 0, name, plain)
+        self.worksheet.write(r, 1, urn, plain)
+        self.worksheet.write_number(r, 2, len(werkzaamheden), plain)
+        # "; " because werkzaamheden names contain commas themselves.
+        self.worksheet.write(r, 3, error and f"FOUT: {error}" or "; ".join(werkzaamheden),
+                             self.fmt("#FFC7CE") if error else plain)
+        for offset, change in enumerate(changes):
+            self.write_change(r, len(BASE_HEADERS) + offset, change)
+        first = len(self.headers)
+        for offset, present in enumerate(gebieden):
+            self.worksheet.write_blank(r, first + offset, None,
+                                       self.fmt(BLUE) if present else plain)
 
-    def write_data_to_cells(self, row, data_to_write):
-        """
-        Write a row of data to the worksheet with appropriate formatting.
-        
-        Args:
-            row (int): Row number to write to
-            data_to_write (list): Data values to write
-        """
-        for col, content in enumerate(data_to_write):
-            if content == 1 and col != AANTAL_WERKZAAMHEDEN_COLUMN_INDEX:
-                self.worksheet.write(row - 1, col, " ", self.blue_format)
-            else:
-                self.write_content(row - 1, col, content)
-
-    def write_content(self, row, col, content):
-        """Write content to a cell with color-coding based on date if applicable."""
-        try:
-            content_date = datetime.strptime(str(content), "%d-%m-%Y %H:%M:%S")
-            color = self.determine_color_based_on_date(content_date)
-            cell_format = self.create_format(color, bold=False, text_wrap=False, border=True)
-            self.worksheet.write(row, col, content, cell_format)
-        except ValueError:
-            self.worksheet.write(row, col, content, self.cell_format)
-
-    def determine_color_based_on_date(self, content_date):
-        """Determine cell color based on how recent the date is."""
-        difference = datetime.now() - content_date
-        return self.set_green_intensity(difference.days)
+    def write_change(self, r: int, col: int, content: str):
+        """A date, green by how recent; anything else plain."""
+        for form in (DATE_FORMAT, "%d-%m-%Y"):
+            try:
+                date = datetime.strptime(str(content), form)
+                break
+            except ValueError:
+                continue
+        else:
+            self.worksheet.write(r, col, content, self.fmt())
+            return
+        days = (self.reference_date - date).days
+        self.worksheet.write(r, col, content, self.fmt(self.set_green_intensity(days)))
 
     @staticmethod
-    def set_green_intensity(days_diff):
-        """
-        Set green color intensity based on days difference.
-        
-        More recent dates get a more intense green color.
-        
-        Args:
-            days_diff (int): Number of days since the date
-            
-        Returns:
-            str: Hex color code
-        """
+    def set_green_intensity(days_diff: int) -> str:
+        """More recent changes get a more intense green."""
         if days_diff < 1:
-            return '#00FF00'
-        elif days_diff < 8:
-            return '#32CD32'
-        elif days_diff < 30:
-            return '#98FB98'
-        elif days_diff < 60:
-            return '#90EE90'
-        else:
-            return '#F0FFF0'
+            return "#00FF00"
+        if days_diff < 8:
+            return "#32CD32"
+        if days_diff < 30:
+            return "#98FB98"
+        if days_diff < 60:
+            return "#90EE90"
+        return "#F0FFF0"
 
     def close_workbook(self):
-        """Close and save the workbook."""
         self.workbook.close()
 
-    @staticmethod
-    def generate_file_path(date_str, overheid, env, suffix, base_dir, extension=None):
-        """
-        Generate a file path for output files.
-        
-        Args:
-            date_str (str): Date in DD-MM-YYYY format
-            overheid (str): Government body name
-            env (str): Environment ('prod' or 'pre')
-            suffix (str): File name suffix
-            base_dir (str): Base directory
-            extension (str, optional): File extension. If None, creates a directory path.
-            
-        Returns:
-            str: Generated file path
-        """
-        date_from_arg = datetime.strptime(date_str, "%d-%m-%Y")
-        formatted_date = date_from_arg.strftime("%Y%m%d")
-        environment = "productie-omgeving" if env == "prod" else "pre-omgeving"
-        base_name = f"{formatted_date}_{overheid.replace(' ', '_')}_{environment}_STTR_{suffix}"
-        
-        if extension:
-            full_name = f"{base_name}.{extension}"
-        else:
-            full_name = base_name  # No extension, treat as folder
-        
-        return os.path.join(base_dir, f"log/{full_name}")
+
+def generate_file_path(date_str, overheid, env, suffix, base_dir, extension=None):
+    """log/<jjjjmmdd>_<overheid>_<omgeving>_STTR_<suffix>[.<extension>]
+
+    Without an extension the path is meant as a folder.
+    """
+    formatted_date = datetime.strptime(date_str, "%d-%m-%Y").strftime("%Y%m%d")
+    environment = "productie-omgeving" if env == "prod" else "pre-omgeving"
+    base_name = f"{formatted_date}_{overheid.replace(' ', '_')}_{environment}_STTR_{suffix}"
+    full_name = f"{base_name}.{extension}" if extension else base_name
+    return os.path.join(base_dir, "log", full_name)
