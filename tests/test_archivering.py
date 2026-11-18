@@ -16,10 +16,12 @@ import catalogus  # noqa: E402
 import rtr  # noqa: E402
 from rtr_client import RtrError  # noqa: E402
 
-OIN = "00000001802139097000"
-ANDER_OIN = "00000001853261179000"
-ROOT = "nl.imow-ws0636.activiteit.ActInWaterschapsVerordWs"
-A = "nl.imow-ws0636.activiteit."
+OIN = "99000000000000000001"
+ANDER_OIN = "99000000000000000002"
+DERDE_OIN = "99000000000000000003"
+PROVINCIE_OIN = "99000000000000000004"
+ROOT = "nl.imow-ws9901.activiteit.Waterschapsverordening"
+A = "nl.imow-ws9901.activiteit."
 
 
 def node(identifier, omschrijving, oin=OIN, **extra):
@@ -38,28 +40,28 @@ def rbos(activiteit, *soorten):
 
 
 class FakeRtr:
-    """Answers like /rtr-frontend/api for a tiny HDSR-like tree."""
+    """Answers like /rtr-frontend/api for a tiny waterschap tree."""
 
     def __init__(self):
         self.requests_made = 0
         self.base_url = "fake://rtr"
         self.national = {
             catalogus.NATIONALE_KNOPEN["waterschap"]: [
-                node(ROOT, "Activiteit gereguleerd in de waterschapsverordening De Stichtse Rijnlanden"),
-                node("nl.imow-ws0663.activiteit.0663", "Activiteit gereguleerd in de waterschapsverordening Vechtstromen", ANDER_OIN),
-                node("nl.imow-ws0650.activiteit.0650", "Activiteit gereguleerd in de waterschapsverordening", "00000003321640840000"),
+                node(ROOT, "Activiteit gereguleerd in de waterschapsverordening De Proefpolders"),
+                node("nl.imow-ws9902.activiteit.9902", "Activiteit gereguleerd in de waterschapsverordening Testrivieren", ANDER_OIN),
+                node("nl.imow-ws9903.activiteit.9903", "Activiteit gereguleerd in de waterschapsverordening", DERDE_OIN),
             ],
             catalogus.NATIONALE_KNOPEN["provincie"]: [
-                node("nl.imow-pv28.activiteit.x", "Activiteit gereguleerd in de Zuid-Hollandse Omgevingsverordening", "00000001002306608000"),
+                node("nl.imow-pv99.activiteit.x", "Activiteit gereguleerd in de Noord-Voorbeeldse Omgevingsverordening", PROVINCIE_OIN),
             ],
             catalogus.NATIONALE_KNOPEN["gemeente"]: [],
         }
-        self.namen = {ROOT: "Hoogheemraadschap De Stichtse Rijnlanden",
-                      "nl.imow-ws0663.activiteit.0663": "waterschap Vechtstromen",
-                      "nl.imow-ws0650.activiteit.0650": "waterschap Zuiderzeeland",
-                      "nl.imow-pv28.activiteit.x": "provincie Zuid-Holland"}
+        self.namen = {ROOT: "Hoogheemraadschap De Proefpolders",
+                      "nl.imow-ws9902.activiteit.9902": "waterschap Testrivieren",
+                      "nl.imow-ws9903.activiteit.9903": "waterschap Zandvlakte",
+                      "nl.imow-pv99.activiteit.x": "provincie Noord-Voorbeeld"}
         self.tree = {
-            ROOT: {"omschrijving": "Activiteit gereguleerd in de waterschapsverordening De Stichtse Rijnlanden",
+            ROOT: {"omschrijving": "Activiteit gereguleerd in de waterschapsverordening De Proefpolders",
                    "activiteiten": [node(A + "Duiker", "duiker aanleggen"),
                                     node(A + "Lozen", "Lozen"),
                                     node("nl.imow-mnre1034.activiteit.Rijk", "rijksactiviteit", catalogus.NATIONAAL_OIN)]},
@@ -77,11 +79,11 @@ class FakeRtr:
             A + "Maatwerk2": {"omschrijving": "Maatwerkvoorschrift aanvragen"},
         }
         self.locs = {
-            ROOT: [("nl.imow-ws0636.ambtsgebied.HDSR", "Hoogheemraadschap De Stichtse Rijnlanden")],
-            A + "Duiker": [("nl.imow-ws0636.gebied.1", "Vaarweg"), ("nl.imow-ws0636.gebied.2", "Beschermingszone A")],
-            A + "Lozen": [("nl.imow-ws0636.ambtsgebied.HDSR", "Hoogheemraadschap De Stichtse Rijnlanden")],
-            A + "Maatwerk1": [("nl.imow-ws0636.gebied.1", "Vaarweg")],
-            A + "Maatwerk2": [("nl.imow-ws0636.gebied.3", "Zomerkade")],
+            ROOT: [("nl.imow-ws9901.ambtsgebied.WS9901", "Hoogheemraadschap De Proefpolders")],
+            A + "Duiker": [("nl.imow-ws9901.gebied.1", "Vaarweg"), ("nl.imow-ws9901.gebied.2", "Beschermingszone A")],
+            A + "Lozen": [("nl.imow-ws9901.ambtsgebied.WS9901", "Hoogheemraadschap De Proefpolders")],
+            A + "Maatwerk1": [("nl.imow-ws9901.gebied.1", "Vaarweg")],
+            A + "Maatwerk2": [("nl.imow-ws9901.gebied.3", "Zomerkade")],
         }
         self.sttr = {catalogus.functionele_structuur_ref(OIN, "Conclusie" + A + "Duiker"): 11,
                      catalogus.functionele_structuur_ref(OIN, "Maatregelen" + A + "Lozen"): 12}
@@ -93,7 +95,7 @@ class FakeRtr:
     def relations(self, identifier, oin, datum):
         self._tel()
         if identifier == catalogus.NATIONALE_KNOPEN["gemeente"]:
-            return [node("nl.imow-gm0344.activiteit.x", "omgevingsplan Utrecht", oin)] if oin == "GEM" else []
+            return [node("nl.imow-gm9999.activiteit.x", "omgevingsplan Voorbeeldstad", oin)] if oin == "GEM" else []
         return self.national[identifier]
 
     def relations_node(self, identifier, oin, datum):
@@ -106,8 +108,8 @@ class FakeRtr:
             raise RtrError("HTTP 500")
         if identifier in self.namen:
             return {"bestuursOrgaanNaam": self.namen[identifier]}
-        if identifier == "nl.imow-gm0344.activiteit.x":
-            return {"bestuursOrgaanNaam": "gemeente Utrecht"}
+        if identifier == "nl.imow-gm9999.activiteit.x":
+            return {"bestuursOrgaanNaam": "gemeente Voorbeeldstad"}
         return {"werkzaamheden": ["Dam plaatsen"] if identifier.endswith("Duiker") else []}
 
     def locaties(self, identifier, datum):
@@ -127,7 +129,7 @@ class FakeRtr:
 
 
 def args(**kw):
-    base = dict(overheid="Hoogheemraadschap De Stichtse Rijnlanden", oin=None, env="prod",
+    base = dict(overheid="Hoogheemraadschap De Proefpolders", oin=None, env="prod",
                 date="17-11-2026", sttr=False, location=False, rate=2.0, include_t5=False)
     base.update(kw)
     return SimpleNamespace(**base)
@@ -138,21 +140,21 @@ class ZoekBestuursorgaan(unittest.TestCase):
         self.rtr = FakeRtr()
 
     def test_naam_via_omschrijving(self):
-        b = catalogus.zoek_op_naam(self.rtr, "Hoogheemraadschap De Stichtse Rijnlanden", "2026-11-17")
+        b = catalogus.zoek_op_naam(self.rtr, "Hoogheemraadschap De Proefpolders", "2026-11-17")
         self.assertEqual((b.oin, b.roots), (OIN, (ROOT,)))
 
     def test_naam_zonder_naam_in_omschrijving_valt_terug_op_details(self):
-        b = catalogus.zoek_op_naam(self.rtr, "Waterschap Zuiderzeeland", "2026-11-17")
-        self.assertEqual(b.oin, "00000003321640840000")
+        b = catalogus.zoek_op_naam(self.rtr, "Waterschap Zandvlakte", "2026-11-17")
+        self.assertEqual(b.oin, DERDE_OIN)
 
     def test_provincie_met_afwijkende_omschrijving(self):
-        b = catalogus.zoek_op_naam(self.rtr, "Provincie Zuid-Holland", "2026-11-17")
-        self.assertEqual(b.naam, "provincie Zuid-Holland")
+        b = catalogus.zoek_op_naam(self.rtr, "Provincie Noord-Voorbeeld", "2026-11-17")
+        self.assertEqual(b.naam, "provincie Noord-Voorbeeld")
 
     def test_gemeente_vraagt_oin(self):
         with self.assertRaisesRegex(catalogus.CatalogusFout, "--oin"):
-            catalogus.zoek_op_naam(self.rtr, "Gemeente Utrecht", "2026-11-17")
-        self.assertEqual(catalogus.zoek_op_oin(self.rtr, "GEM", "2026-11-17").naam, "gemeente Utrecht")
+            catalogus.zoek_op_naam(self.rtr, "Gemeente Voorbeeldstad", "2026-11-17")
+        self.assertEqual(catalogus.zoek_op_oin(self.rtr, "GEM", "2026-11-17").naam, "gemeente Voorbeeldstad")
 
     def test_onbekend(self):
         with self.assertRaisesRegex(catalogus.CatalogusFout, "niet gevonden"):
@@ -162,7 +164,7 @@ class ZoekBestuursorgaan(unittest.TestCase):
 class Boom(unittest.TestCase):
     def test_walk(self):
         rtr_ = FakeRtr()
-        b = catalogus.Bestuursorgaan("HDSR", OIN, (ROOT,))
+        b = catalogus.Bestuursorgaan("Hoogheemraadschap De Proefpolders", OIN, (ROOT,))
         acts = {a.identifier: a for a in catalogus.enumereer_activiteiten(rtr_, b, datum="2026-11-17")}
         self.assertIn(ROOT, acts)                                   # root is an activity too
         self.assertNotIn("nl.imow-mnre1034.activiteit.Rijk", acts)  # other OIN not followed
@@ -279,7 +281,7 @@ class Matrix(unittest.TestCase):
         self.assertEqual(len(manifest["sttrs"]), 2)
         with open(archiver._pad("werkingsgebieden", "txt"), encoding="utf-8") as f:
             tekst = f.read()
-        self.assertIn("Vaarweg (nl.imow-ws0636.gebied.1):\n  - duiker aanleggen\n  - Maatwerkvoorschrift aanvragen\n", tekst)
+        self.assertIn("Vaarweg (nl.imow-ws9901.gebied.1):\n  - duiker aanleggen\n  - Maatwerkvoorschrift aanvragen\n", tekst)
 
 
 class Excel(unittest.TestCase):

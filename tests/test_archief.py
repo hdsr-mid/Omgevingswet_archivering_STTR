@@ -17,12 +17,12 @@ import archief  # noqa: E402
 from catalogus import Bestuursorgaan  # noqa: E402
 from versiehistorie import Versiehistorie, maandelijks  # noqa: E402
 
-BO = Bestuursorgaan("HDSR", "00000001802139097000", ("root",))
+BO = Bestuursorgaan("Waterschap Voorbeeld", "99000000000000000001", ("root",))
 
 
 def config(besluiten):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-        json.dump({"bestuursorgaan": {"naam": "HDSR", "oin": BO.oin, "root": "root"},
+        json.dump({"bestuursorgaan": {"naam": BO.naam, "oin": BO.oin, "root": "root"},
                    "regeling": {"cvdr": "CVDR1", "titel": "Verordening"},
                    "besluiten": besluiten}, f)
     try:
@@ -44,14 +44,14 @@ def versie(sttr_id, begin, eind=None):
 
 class Config(unittest.TestCase):
     def test_mapnaam_en_perioden(self):
-        c = config([besluit("2025-07-15", "2025-07-24", ["2025-08-08"], "wsb-2025-17997"),
-                    besluit("2023-12-20", "2024-01-01", ["2024-01-15"], "wsb-2023-15782")])
+        c = config([besluit("2025-07-15", "2025-07-24", ["2025-08-08"], "wsb-2025-90002"),
+                    besluit("2023-12-20", "2024-01-01", ["2024-01-15"], "wsb-2023-90001")])
         self.assertEqual([b.map for b in c.besluiten],
-                         ["20231220_besluit_wsb-2023-15782", "20250715_besluit_wsb-2025-17997"])
+                         ["20231220_besluit_wsb-2023-90001", "20250715_besluit_wsb-2025-90002"])
         self.assertEqual(c.besluiten[0].tot, date(2025, 7, 24))
         self.assertIsNone(c.besluiten[1].tot)
-        self.assertEqual(c.besluit_voor(date(2025, 7, 23)).map, "20231220_besluit_wsb-2023-15782")
-        self.assertEqual(c.besluit_voor(date(2025, 7, 24)).map, "20250715_besluit_wsb-2025-17997")
+        self.assertEqual(c.besluit_voor(date(2025, 7, 23)).map, "20231220_besluit_wsb-2023-90001")
+        self.assertEqual(c.besluit_voor(date(2025, 7, 24)).map, "20250715_besluit_wsb-2025-90002")
 
     def test_mappen_heten_naar_de_dag_zichtbaar_in_dso(self):
         b = besluit("2023-12-20", "2024-01-01", [], "wsb-1")
@@ -225,34 +225,34 @@ class Keten(unittest.TestCase):
 
 GML = (b'<?xml version="1.0"?><geo:GeoInformatieObjectVaststelling '
        b'xmlns:geo="https://standaarden.overheid.nl/stop/imop/geo/"><geo:vastgesteldeVersie>'
-       b'<geo:GeoInformatieObjectVersie><geo:FRBRWork>/join/id/regdata/ws0636/2023/WG_O_ARK</geo:FRBRWork>'
-       b'<geo:FRBRExpression>/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004</geo:FRBRExpression>'
+       b'<geo:GeoInformatieObjectVersie><geo:FRBRWork>/join/id/regdata/ws9901/2023/WG_Oost</geo:FRBRWork>'
+       b'<geo:FRBRExpression>/join/id/regdata/ws9901/2023/WG_Oost/nld@2024-12-02;1004</geo:FRBRExpression>'
        b'</geo:GeoInformatieObjectVersie></geo:vastgesteldeVersie></geo:GeoInformatieObjectVaststelling>')
 
 
 class Bijlagen(unittest.TestCase):
     def test_bestandsnaam_van_informatieobject(self):
-        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004"),
-                         "WG_O_ARK_2024-12-02_1004")
-        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_08/nld@2023-12-01"),
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws9901/2023/WG_Oost/nld@2024-12-02;1004"),
+                         "WG_Oost_2024-12-02_1004")
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws9901/2023/WG_08/nld@2023-12-01"),
                          "WG_08_2023-12-01")
-        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2023-06-02;ontwerp"),
-                         "WG_O_ARK_2023-06-02_ontwerp")
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws9901/2023/WG_Oost/nld@2023-06-02;ontwerp"),
+                         "WG_Oost_2023-06-02_ontwerp")
 
     def test_metadata_meerdere_waarden_en_genest(self):
         m = archief.lees_metadata(
             b'<metadata_gegevens><metadata name="OVERHEIDop.steltVast" content="/join/a"/>'
             b'<metadata name="OVERHEIDop.steltVast" content="/join/b"/>'
             b'<metadata name="OVERHEIDop.gebiedsmarkering" content="Waterschap">'
-            b'<metadata name="OVERHEIDop.waterschapsnaam" content="HDSR"/></metadata>'
+            b'<metadata name="OVERHEIDop.waterschapsnaam" content="Voorbeeld"/></metadata>'
             b'<metadata name="OVERHEIDop.externeBijlage" content="Legger|exb-2023-1"/></metadata_gegevens>')
         self.assertEqual(m["OVERHEIDop.steltVast"], ["/join/a", "/join/b"])
-        self.assertEqual(m["OVERHEIDop.waterschapsnaam"], ["HDSR"])
+        self.assertEqual(m["OVERHEIDop.waterschapsnaam"], ["Voorbeeld"])
         self.assertEqual(m["OVERHEIDop.externeBijlage"], ["Legger|exb-2023-1"])
 
     def test_gml_noemt_zijn_versie(self):
         self.assertEqual(archief.frbr_expressie(GML),
-                         "/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004")
+                         "/join/id/regdata/ws9901/2023/WG_Oost/nld@2024-12-02;1004")
 
 
 def gml(join):
@@ -263,8 +263,8 @@ def gml(join):
             b'</geo:GeoInformatieObjectVaststelling>')
 
 
-WG = "/join/id/regdata/ws0636/2023/"
-TITELS = {"WG_O_ARK": "Oost", "WG_GA": "Groot afvoerdebiet", "WG_Grote_Afvoer": "Groot afvoerdebiet",
+WG = "/join/id/regdata/ws9901/2023/"
+TITELS = {"WG_Oost": "Oost", "WG_GA": "Groot afvoerdebiet", "WG_Grote_Afvoer": "Groot afvoerdebiet",
           "WG_Alleen_Ontwerp": "Vervallen gebied"}
 
 
@@ -274,22 +274,22 @@ class BijlagenOpslaan(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")
         b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-21"}
-        b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "o"},
-                        {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "k1"},
-                        {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "k2"}]
+        b["ontwerp"] = [{"id": "wsb-2023-90011", "soort": "ontwerp", "titel": "o"},
+                        {"id": "wsb-2023-90012", "soort": "kennisgeving", "titel": "k1"},
+                        {"id": "wsb-2023-90013", "soort": "kennisgeving", "titel": "k2"}]
         self.c = config([b])
         self.a = archief.Archief(self.c, self.tmp.name, client=None)
         self.besluitmap = os.path.join(self.tmp.name, self.c.besluiten[0].map)
         self.metadata = {
-            "wsb-2023-10605": {"OVERHEIDop.steltVast": [
-                WG + "WG_O_ARK/nld@2023-06-02;ontwerp",          # same GIO in the besluit
+            "wsb-2023-90011": {"OVERHEIDop.steltVast": [
+                WG + "WG_Oost/nld@2023-06-02;ontwerp",          # same GIO in the besluit
                 WG + "WG_Grote_Afvoer/nld@2023-06-02;ontwerp",   # renamed WG_GA, same title
                 WG + "WG_Alleen_Ontwerp/nld@2023-06-02;ontwerp"]},  # not in the besluit
-            "wsb-2023-10592": {"OVERHEIDop.externeBijlage": ["Legger|exb-1"]},
-            "wsb-2023-11096": {"OVERHEIDop.externeBijlage": ["Legger|exb-2"]},
-            "wsb-2023-15782": {"OVERHEIDop.steltVast": [WG + "WG_O_ARK/nld@2023-12-01",
+            "wsb-2023-90012": {"OVERHEIDop.externeBijlage": ["Legger|exb-1"]},
+            "wsb-2023-90013": {"OVERHEIDop.externeBijlage": ["Legger|exb-2"]},
+            "wsb-2023-90001": {"OVERHEIDop.steltVast": [WG + "WG_Oost/nld@2023-12-01",
                                                         WG + "WG_GA/nld@2023-12-01"],
                                "DCTERMS.available": ["2023-12-21"]}}
         self.verzoeken = []
@@ -320,23 +320,23 @@ class BijlagenOpslaan(unittest.TestCase):
         self.a.bijlagen()
         self.assertEqual(sorted(os.listdir(os.path.join(self.besluitmap, "kaarten"))),
                          ["ONTWERP_WG_Alleen_Ontwerp_2023-06-02_ontwerp.gml",
-                          "WG_GA_2023-12-01.gml", "WG_O_ARK_2023-12-01.gml"])
-        ontwerp = {x["id"].split("/")[-2]: x for x in self.lees()["wsb-2023-10605"]["bijlagen"]}
-        self.assertEqual(ontwerp["WG_O_ARK"]["vastgesteld_als"], WG + "WG_O_ARK/nld@2023-12-01")
+                          "WG_GA_2023-12-01.gml", "WG_Oost_2023-12-01.gml"])
+        ontwerp = {x["id"].split("/")[-2]: x for x in self.lees()["wsb-2023-90011"]["bijlagen"]}
+        self.assertEqual(ontwerp["WG_Oost"]["vastgesteld_als"], WG + "WG_Oost/nld@2023-12-01")
         self.assertEqual(ontwerp["WG_Grote_Afvoer"]["vastgesteld_als"], WG + "WG_GA/nld@2023-12-01")
-        self.assertIsNone(ontwerp["WG_O_ARK"]["bestand"])
+        self.assertIsNone(ontwerp["WG_Oost"]["bestand"])
         # what the besluit sets is not downloaded for the ontwerp
-        self.assertNotIn("https://r" + WG + "WG_O_ARK/nld@2023-06-02;ontwerp.gml", self.verzoeken)
+        self.assertNotIn("https://r" + WG + "WG_Oost/nld@2023-06-02;ontwerp.gml", self.verzoeken)
         self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Ontwerp_20230829", "kaarten")))
 
     def test_gelijke_bijlage_een_keer_opgeslagen(self):
         self.a.bijlagen()
         p = self.lees()
-        eerste, tweede = p["wsb-2023-10592"]["bijlagen"][0], p["wsb-2023-11096"]["bijlagen"][0]
+        eerste, tweede = p["wsb-2023-90012"]["bijlagen"][0], p["wsb-2023-90013"]["bijlagen"][0]
         self.assertEqual(eerste["bestand"], "Ontwerp_20230829/bijlagen/exb-1_Legger.pdf")
         self.assertEqual(tweede["identiek_aan"], "Ontwerp_20230829/bijlagen/exb-1_Legger.pdf")
         self.assertEqual(os.listdir(os.path.join(self.besluitmap, "Ontwerp_20230829", "bijlagen")), ["exb-1_Legger.pdf"])
-        self.assertEqual(p["wsb-2023-15782"]["gepubliceerd"], "2023-12-21")
+        self.assertEqual(p["wsb-2023-90001"]["gepubliceerd"], "2023-12-21")
 
     def test_tweede_run_haalt_niets_opnieuw(self):
         self.a.bijlagen()
@@ -347,25 +347,25 @@ class BijlagenOpslaan(unittest.TestCase):
     def test_kaart_van_eerdere_indeling_wordt_verplaatst(self):
         self.a.bijlagen()
         # As an earlier version kept it: under Definitief_…/kaarten, and bijlagen.json saying so.
-        oud = os.path.join(self.besluitmap, "Definitief_20231221", "kaarten", "WG_O_ARK_2023-12-01.gml")
+        oud = os.path.join(self.besluitmap, "Definitief_20231221", "kaarten", "WG_Oost_2023-12-01.gml")
         os.makedirs(os.path.dirname(oud))
-        os.replace(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml"), oud)
+        os.replace(os.path.join(self.besluitmap, "kaarten", "WG_Oost_2023-12-01.gml"), oud)
         pad = os.path.join(self.besluitmap, "bijlagen.json")
         with open(pad, encoding="utf-8") as f:
             data = json.load(f)
-        for x in data["publicaties"]["wsb-2023-15782"]["bijlagen"]:
-            if x["id"].endswith("WG_O_ARK/nld@2023-12-01"):
-                x["bestand"] = "Definitief_20231221/kaarten/WG_O_ARK_2023-12-01.gml"
+        for x in data["publicaties"]["wsb-2023-90001"]["bijlagen"]:
+            if x["id"].endswith("WG_Oost/nld@2023-12-01"):
+                x["bestand"] = "Definitief_20231221/kaarten/WG_Oost_2023-12-01.gml"
         with open(pad, "w", encoding="utf-8") as f:
             json.dump(data, f)
         self.verzoeken.clear()
         self.a.bijlagen()
         self.assertEqual(self.verzoeken, [])
-        self.assertTrue(os.path.exists(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml")))
+        self.assertTrue(os.path.exists(os.path.join(self.besluitmap, "kaarten", "WG_Oost_2023-12-01.gml")))
         self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Definitief_20231221", "kaarten")))
 
     def test_gml_met_andere_versie_wordt_geweigerd(self):
-        archief.haal_met_url = lambda url, **_: (gml(WG + "WG_O_ARK/nld@2025-01-01;9"), url)
+        archief.haal_met_url = lambda url, **_: (gml(WG + "WG_Oost/nld@2025-01-01;9"), url)
         with self.assertRaisesRegex(RuntimeError, "niet /join"):
             self.a.bijlagen()
 
@@ -374,7 +374,7 @@ class AlleenInhoud(unittest.TestCase):
     def test_werkbestanden_niet_in_archief(self):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as uit, tempfile.TemporaryDirectory() as werk:
-            c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")])
+            c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")])
             c.pad = os.path.join(werk, "archief_CVDR1.json")
             a = archief.Archief(c, uit, SimpleNamespace(base_url="fake"), werkmap=werk)
             os.makedirs(a.map(c.besluiten[0]))
@@ -406,16 +406,16 @@ class ReadmeTxt(unittest.TestCase):
             return f.read()
 
     def test_wijziging_met_intern_bestand_en_dm(self):
-        b = besluit("2024-12-17", "2025-01-01", [], "wsb-2024-27541")
+        b = besluit("2024-12-17", "2025-01-01", [], "wsb-2024-90002")
         b["zichtbaar_in_dso"] = {"ontwerp": "2024-10-17", "besluit": "2024-12-20"}
-        b["ontwerp"] = [{"id": "wsb-2024-22028", "soort": "ontwerp", "titel": "Ontwerp"},
-                        {"id": "wsb-2024-22126", "soort": "kennisgeving", "titel": "Kennisgeving"}]
+        b["ontwerp"] = [{"id": "wsb-2024-90021", "soort": "ontwerp", "titel": "Ontwerp"},
+                        {"id": "wsb-2024-90022", "soort": "kennisgeving", "titel": "Kennisgeving"}]
         b["toestanden"] = [{"nummer": 3, "geldig_vanaf": "2025-01-01"}]
         b["intern"] = {"ontwerp.kb": "Ontwerp_v1.kb"}
-        b["dm"] = [{"omschrijving": "Bestuursstukken ontwerp", "nummer": "1998459", "fase": "ontwerp"}]
-        a, c = self.maak([b], ["Ontwerp_20241017/wsb-2024-22028_ontwerp.pdf",
-                               "Ontwerp_20241017/wsb-2024-22126_kennisgeving.pdf",
-                               "Ontwerp_20241017/Ontwerp_v1.zip", "Definitief_20241220/wsb-2024-27541_besluit.pdf",
+        b["dm"] = [{"omschrijving": "Bestuursstukken ontwerp", "nummer": "1234567", "fase": "ontwerp"}]
+        a, c = self.maak([b], ["Ontwerp_20241017/wsb-2024-90021_ontwerp.pdf",
+                               "Ontwerp_20241017/wsb-2024-90022_kennisgeving.pdf",
+                               "Ontwerp_20241017/Ontwerp_v1.zip", "Definitief_20241220/wsb-2024-90002_besluit.pdf",
                                "Definitief_20241220/regeling_toestand-3_geldend-vanaf-20250101.pdf", "LEESMIJ.md",
                                "losse_notitie.txt"])
         uitroep = a._readme_txt(c.besluiten[0], {}, [])
@@ -424,9 +424,9 @@ class ReadmeTxt(unittest.TestCase):
         self.assertIn("!\t\tOntwerp_v1.kb  (Match-bestand (.kb))", regels)
         self.assertIn("\t\tOntwerp_20241017/Ontwerp_v1.zip", regels)            # put in by hand: found
         self.assertIn("!\t\trenvooi (.pdf)", regels)                     # a wijziging expects one
-        self.assertIn("\tBestuursstukken ontwerp: DM 1998459", regels)
+        self.assertIn("\tBestuursstukken ontwerp: DM 1234567", regels)
         self.assertIn("!\tBestuursstukken besluit: DM-nummer", regels)
-        self.assertIn("\t\tLink: https://zoek.officielebekendmakingen.nl/wsb-2024-22028.html", regels)
+        self.assertIn("\t\tLink: https://zoek.officielebekendmakingen.nl/wsb-2024-90021.html", regels)
         self.assertIn("\t\tlosse_notitie.txt", regels)                   # under overige bestanden
         self.assertEqual(uitroep, sum(1 for r in regels if r.startswith("!")))
         self.assertIn(f"Nakijken: {uitroep} regel(s).", t)
@@ -438,9 +438,9 @@ class ReadmeTxt(unittest.TestCase):
             self.assertIn(b"\r\n", f.read())
 
     def test_nieuwe_regeling_verwacht_geen_renvooi_of_mutaties(self):
-        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")
         b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-20"}
-        b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "Ontwerp"}]
+        b["ontwerp"] = [{"id": "wsb-2023-90011", "soort": "ontwerp", "titel": "Ontwerp"}]
         b["toestanden"] = [{"nummer": 1, "geldig_vanaf": "2024-01-01"}]
         a, c = self.maak([b], ["Definitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf"])
         a._readme_txt(c.besluiten[0], {}, [])
