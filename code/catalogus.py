@@ -71,6 +71,19 @@ class CatalogusFout(RuntimeError):
     """The bestuursorgaan could not be found, or not unambiguously."""
 
 
+class RijkNietOndersteund(CatalogusFout):
+    """The national government: its regels are not in CVDR and its STTR not in a decentral tree."""
+
+
+def niet_rijk(oin: str, roots: Iterable[str] = ()) -> None:
+    """Refuse the national government: its OIN, or a root in a national (``.imow-mnre``) tree."""
+    rijk = [r for r in roots if ".imow-mnre" in r]
+    if oin == NATIONAAL_OIN or rijk:
+        raise RijkNietOndersteund(
+            f"OIN {oin}{' (' + ', '.join(rijk) + ')' if rijk else ''} is de rijksoverheid; "
+            "alleen waterschappen, provincies en gemeenten worden ondersteund")
+
+
 @dataclass(frozen=True)
 class Bestuursorgaan:
     naam: str
@@ -138,10 +151,12 @@ def _roots_voor_oin(kinderen: Iterable[dict[str, Any]],
 
 
 def zoek_op_oin(client: RtrClient, oin: str, datum: str) -> Bestuursorgaan:
-    """The bestuursorgaan behind *oin*, of any kind, gemeenten included."""
+    """The bestuursorgaan behind *oin*, of any kind, gemeenten included; not the Rijk."""
+    niet_rijk(oin)
     for soort, knoop in NATIONALE_KNOPEN.items():
         roots = _roots_voor_oin(client.relations(knoop, oin, datum), oin)
         if roots:
+            niet_rijk(oin, roots)
             naam = client.details(roots[0], datum).get("bestuursOrgaanNaam")
             log.info("OIN %s: %s (%s), %d root(s)", oin, naam, soort,
                      len(roots))

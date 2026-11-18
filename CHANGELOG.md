@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Archief: ook voor provincies en gemeenten; het `README.txt` noemt het blad van elke publicatie (Waterschapsblad, Provinciaal blad of Gemeenteblad, uit het begin van de id), en een onbekend blad is een fout in het JSON-bestand
 - Archief: `root` in het JSON-bestand is niet meer nodig (ook `roots`, een lijst); zonder root zoekt de tool de activiteitenboom bij het OIN op, op elke datum van inwerkingtreding en op `--tot`
 - Activiteitenboom: een root die op de gevraagde datum niet bestaat (HTTP 404), wordt overgeslagen zolang een andere root er wel is
+- Exitcodes: 2 als het JSON-bestand of een optie onbruikbaar is (archief), 3 voor het Rijk (archief en `main.py`), dat niet wordt ondersteund; 1 blijft: versies ontbreken
 - `data/archief_CVDR707248.json`: kennisgeving wsb-2025-12605 (inspraak op de ontwerp-wijziging van de werkingsgebieden) bij het besluit van 15-07-2025
 
 ## [2.0.0] - 2026-11-17

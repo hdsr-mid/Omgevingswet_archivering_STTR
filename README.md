@@ -54,6 +54,7 @@ python code/main.py
 
 - **Waterschappen en provincies** worden op naam gevonden, bijvoorbeeld `--overheid Waterschap_Vechtstromen`, `--overheid Wetterskip_Fryslân` of `--overheid Provincie_Zuid-Holland`. Bij een onbekende naam toont de tool welke namen er wel zijn.
 - **Gemeenten** geeft de RTR alleen op OIN prijs; gebruik `--oin`, bijvoorbeeld `--oin 00000001002220647000` (gemeente Utrecht). Het OIN staat in het OIN-register van Logius.
+- **Het Rijk** wordt niet ondersteund: het OIN van BZK of een rijksactiviteit (`nl.imow-mnre…`) geeft exitcode 3.
 
 ### Voorbeelden
 
@@ -128,6 +129,15 @@ archief/
 - **Hele regeling:** de wijzigingsbesluiten bevatten alleen de wijzigingen. De hele regeling wordt per toestand afgedrukt van [lokaleregelgeving.overheid.nl](https://lokaleregelgeving.overheid.nl/CVDR707248), met de afdrukopmaak van die site, in A4 en met bron en afdrukdatum in de voettekst. Dat gebeurt met Playwright: op Windows met de geïnstalleerde Edge, elders met Chrome of met `python -m playwright install chromium-headless-shell`, of met `--browser <pad>`.
 - **Statusoverzicht:** in het archief toont `status.xlsx` per soort de datum waarop de versie inging (`Geldig vanaf …`). De laatste wijzigingsdatum van een versie overschrijft de RTR zodra die versie vervangen wordt, dus voor een peildatum in het verleden zegt die niets.
 - **Stappen:** `--stappen publicaties,bijlagen,regeling,rtr,wijzigingen,index` (standaard alle). Wat er al is, wordt overgeslagen; een nieuw besluit toevoegen aan het JSON-bestand en opnieuw draaien vult het archief aan.
+
+### Exitcodes
+
+| Code | `code/archief.py` | `code/main.py` |
+|---|---|---|
+| 0 | klaar | klaar |
+| 1 | het archief mist versies van toepasbare regels (of een onverwachte fout) | bestuursorgaan niet gevonden, RTR onbereikbaar, of geen enkele activiteit gelukt |
+| 2 | JSON-bestand of opties onbruikbaar: geen geldige JSON, een veld ontbreekt, een datum of blad klopt niet, geen CVDR-nummer, geen activiteitenboom bij het OIN | opties onbruikbaar |
+| 3 | het Rijk: een publicatie in de Staatscourant of het Staatsblad (`stcrt-`, `stb-`), een regeling uit het BWB, het OIN van BZK of een rijksactiviteit (`nl.imow-mnre…`) | het OIN van BZK of een rijksactiviteit |
 
 ## Tests
 

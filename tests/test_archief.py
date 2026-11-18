@@ -4,7 +4,10 @@ the version history is reconstructed.
     python -m unittest discover -s tests
 """
 
+import contextlib
+import io
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -36,6 +39,21 @@ def besluit(besluitdatum, in_werking, peildata, bekendmaking):
     return {"besluitdatum": besluitdatum, "naam": "besluit", "in_werking": in_werking,
             "definitief": [{"id": bekendmaking, "soort": "besluit", "titel": "t"}],
             "rtr_peildata": peildata, "zichtbaar_in_dso": {"besluit": besluitdatum}}
+
+
+@contextlib.contextmanager
+def stil():
+    """Undo the logging set up by a main(): its handlers would print in every later test."""
+    root = logging.getLogger()
+    voor, niveau = list(root.handlers), root.level
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            yield
+    finally:
+        for h in [h for h in root.handlers if h not in voor]:
+            root.removeHandler(h)
+            h.close()
+        root.setLevel(niveau)
 
 
 def versie(sttr_id, begin, eind=None):
@@ -94,8 +112,11 @@ class Config(unittest.TestCase):
         self.assertEqual(archief.blad("wsb-2025-90002"), "Waterschapsblad")
         self.assertEqual(archief.blad("prb-2025-90003"), "Provinciaal blad")
         self.assertEqual(archief.blad("gmb-2025-90004"), "Gemeenteblad")
-        for pub_id in ("stcrt-2025-90005", "bgr-2025-90006", "wsb2025"):
-            with self.assertRaises(ValueError):
+        for pub_id in ("bgr-2025-90006", "wsb2025"):
+            with self.assertRaises(archief.ConfigFout):
+                archief.blad(pub_id)
+        for pub_id in ("stcrt-2025-90005", "stb-2025-90006"):
+            with self.assertRaises(catalogus.RijkNietOndersteund):
                 archief.blad(pub_id)
 
     def test_onbekend_blad_is_fout(self):
@@ -109,6 +130,69 @@ class Config(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "buiten de periode"):
             config([besluit("2023-12-20", "2024-01-01", ["2025-08-08"], "wsb-1"),
                     besluit("2025-07-15", "2025-07-24", [], "wsb-2")])
+
+
+class Exitcodes(unittest.TestCase):
+    """2: the config cannot be used; 3: the national government, which is not supported."""
+
+    def schrijf(self, inhoud):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        pad = os.path.join(tmp.name, "archief_CVDR1.json")
+        with open(pad, "w", encoding="utf-8") as f:
+            f.write(inhoud if isinstance(inhoud, str) else json.dumps(inhoud))
+        return pad
+
+    def goed(self, **wijzig):
+        ruw = {"bestuursorgaan": {"naam": BO.naam, "oin": BO.oin, "root": "nl.imow-ws9901.activiteit.x"},
+               "regeling": {"cvdr": "CVDR1", "titel": "Verordening"},
+               "besluiten": [besluit("2025-07-15", "2025-07-24", [], "wsb-2025-90002")]}
+        for sleutel, waarde in wijzig.items():
+            deel, _, veld = sleutel.partition("__")
+            if veld:
+                ruw[deel][veld] = waarde
+            else:
+                ruw[deel] = waarde
+        return ruw
+
+    def test_onbruikbare_config(self):
+        kapot_besluit = besluit("2025-07-15", "15-07-2025", [], "wsb-2025-90002")
+        zonder_naam = besluit("2025-07-15", "2025-07-24", [], "wsb-2025-90002")
+        del zonder_naam["naam"]
+        for naam, inhoud, melding in (
+                ("geen JSON", "{", "geen geldige JSON"),
+                ("sleutel ontbreekt", self.goed(besluiten=[zonder_naam]), "'naam' ontbreekt"),
+                ("datum", self.goed(besluiten=[kapot_besluit]), "Invalid isoformat"),
+                ("geen cvdr", self.goed(regeling={"titel": "t"}), "CVDR-nummer"),
+                ("omgeving", self.goed(omgeving="test"), "omgeving moet"),
+                ("blad", self.goed(besluiten=[besluit("2025-07-15", "2025-07-24", [], "abc-2025-1")]),
+                 "onbekend blad")):
+            with self.subTest(naam), self.assertRaisesRegex(archief.ConfigFout, melding):
+                archief.lees_config(self.schrijf(inhoud))
+        with self.assertRaisesRegex(archief.ConfigFout, "No such file"):
+            archief.lees_config("bestaat/niet.json")
+
+    def test_rijk(self):
+        for naam, ruw in (
+                ("staatscourant", self.goed(besluiten=[besluit("2025-07-15", "2025-07-24", [], "stcrt-2025-1")])),
+                ("bwb", self.goed(regeling={"bwb": "BWBR0047052", "titel": "Omgevingsbesluit"})),
+                ("bwb als cvdr", self.goed(regeling={"cvdr": "BWBR0047052", "titel": "t"})),
+                ("nationaal oin", self.goed(bestuursorgaan__oin=catalogus.NATIONAAL_OIN)),
+                ("nationale root", self.goed(bestuursorgaan__root="nl.imow-mnre1034.activiteit.x"))):
+            with self.subTest(naam), self.assertRaises(catalogus.RijkNietOndersteund):
+                archief.lees_config(self.schrijf(ruw))
+
+    def draai(self, ruw):
+        with tempfile.TemporaryDirectory() as uit, tempfile.TemporaryDirectory() as werk, stil():
+            return archief.main([self.schrijf(ruw), "--uit", uit, "--werkmap", werk,
+                                 "--cache", os.path.join(werk, "cache"), "--stappen", "index"])
+
+    def test_main_geeft_de_code(self):
+        self.assertEqual(self.draai("{"), 2)
+        self.assertEqual(self.draai(self.goed(regeling={"bwb": "BWBR0047052", "titel": "t"})), 3)
+        with self.assertRaises(SystemExit) as fout, stil():  # argparse: an unusable option is 2 too
+            archief.main(["x.json", "--tot", "18-11-2026"])
+        self.assertEqual(fout.exception.code, 2)
 
 
 class Roots(unittest.TestCase):
@@ -164,7 +248,7 @@ class Roots(unittest.TestCase):
 
     def test_geen_boom_is_fout(self):
         a, _ = self.maak({}, {})
-        with self.assertRaisesRegex(catalogus.CatalogusFout, "zet 'root'"):
+        with self.assertRaisesRegex(archief.ConfigFout, "zet 'root'"):
             a.vind_roots(date(2026, 11, 18))
 
     def test_root_in_config_vraagt_niets(self):

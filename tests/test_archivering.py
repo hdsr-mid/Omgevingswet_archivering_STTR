@@ -160,6 +160,18 @@ class ZoekBestuursorgaan(unittest.TestCase):
             catalogus.zoek_op_naam(self.rtr, "Gemeente Voorbeeldstad", "2026-11-17")
         self.assertEqual(catalogus.zoek_op_oin(self.rtr, "GEM", "2026-11-17").naam, "gemeente Voorbeeldstad")
 
+    def test_rijk_niet_ondersteund(self):
+        with self.assertRaises(catalogus.RijkNietOndersteund):
+            catalogus.zoek_op_oin(self.rtr, catalogus.NATIONAAL_OIN, "2026-11-17")
+        self.rtr.national[catalogus.NATIONALE_KNOPEN["waterschap"]].append(
+            node("nl.imow-mnre1130.activiteit.x", "rijksactiviteit", "99000000000000000009"))
+        with self.assertRaises(catalogus.RijkNietOndersteund):
+            catalogus.zoek_op_oin(self.rtr, "99000000000000000009", "2026-11-17")
+        import main
+        from test_archief import stil
+        with stil():
+            self.assertEqual(main.main(["--oin", catalogus.NATIONAAL_OIN]), 3)
+
     def test_onbekend(self):
         with self.assertRaisesRegex(catalogus.CatalogusFout, "niet gevonden"):
             catalogus.zoek_op_naam(self.rtr, "Waterschap Bestaatniet", "2026-11-17")

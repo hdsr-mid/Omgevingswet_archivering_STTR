@@ -79,13 +79,22 @@ STAPPEN = ("publicaties", "bijlagen", "regeling", "rtr", "wijzigingen", "index")
 GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
 # The blad a decentralised government publishes in, by the prefix of the publication id.
 BLADEN = {"wsb": "Waterschapsblad", "prb": "Provinciaal blad", "gmb": "Gemeenteblad"}
+RIJKSBLADEN = {"stcrt": "Staatscourant", "stb": "Staatsblad"}
+
+
+class ConfigFout(ValueError):
+    """The config file cannot be used (exit code 2)."""
 
 
 def blad(pub_id: str) -> str:
     """``wsb-2025-17997`` -> ``Waterschapsblad``."""
     voorvoegsel = pub_id.split("-", 1)[0]
+    if voorvoegsel in RIJKSBLADEN:
+        raise catalogus.RijkNietOndersteund(
+            f"{pub_id} staat in de {RIJKSBLADEN[voorvoegsel]}: regelingen van het Rijk worden "
+            "niet ondersteund, alleen die van waterschappen, provincies en gemeenten")
     if voorvoegsel not in BLADEN:
-        raise ValueError(f"{pub_id}: onbekend blad '{voorvoegsel}' (bekend: {', '.join(BLADEN)})")
+        raise ConfigFout(f"{pub_id}: onbekend blad '{voorvoegsel}' (bekend: {', '.join(BLADEN)})")
     return BLADEN[voorvoegsel]
 
 
@@ -143,9 +152,32 @@ class Config:
 
 
 def lees_config(pad: str) -> Config:
-    with open(pad, encoding="utf-8") as f:
-        ruw = json.load(f)
+    """The config file, checked: ``ConfigFout`` when it cannot be used, ``RijkNietOndersteund``
+    when it is about a national regeling."""
+    try:
+        with open(pad, encoding="utf-8") as f:
+            ruw = json.load(f)
+        return _lees_config(pad, ruw)
+    except (ConfigFout, catalogus.RijkNietOndersteund):
+        raise
+    except json.JSONDecodeError as exc:
+        raise ConfigFout(f"{pad}: geen geldige JSON ({exc})") from exc
+    except KeyError as exc:
+        raise ConfigFout(f"{pad}: '{exc.args[0]}' ontbreekt") from exc
+    except (OSError, TypeError, ValueError, AttributeError) as exc:
+        raise ConfigFout(f"{pad}: {exc}") from exc
+
+
+def _lees_config(pad: str, ruw: dict[str, Any]) -> Config:
     bo = ruw["bestuursorgaan"]
+    regeling = ruw["regeling"]
+    if "bwb" in regeling or any(str(v).upper().startswith("BWB") for v in regeling.values()):
+        raise catalogus.RijkNietOndersteund(
+            f"{pad}: een regeling uit het BWB is van het Rijk; alleen regelingen in CVDR "
+            "(waterschappen, provincies en gemeenten) worden ondersteund")
+    if not re.fullmatch(r"CVDR\d+", regeling.get("cvdr", "")):
+        raise ConfigFout(f"{pad}: regeling.cvdr moet een CVDR-nummer zijn (CVDR…), "
+                         f"niet {regeling.get('cvdr')!r}")
     besluiten = [Besluit(
         besluitdatum=date.fromisoformat(b["besluitdatum"]), naam=b["naam"],
         in_werking=date.fromisoformat(b["in_werking"]),
@@ -160,7 +192,7 @@ def lees_config(pad: str) -> Config:
             for doc in docs:
                 blad(doc["id"])
             if docs and fase not in b.zichtbaar:
-                raise ValueError(f"{b.map}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
+                raise ConfigFout(f"{b.map}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
                                  f"{fase} zichtbaar werd in het DSO; de map wordt ernaar genoemd)")
     besluiten.sort(key=lambda b: b.in_werking)
     for huidig, volgend in zip(besluiten, besluiten[1:]):
@@ -168,15 +200,19 @@ def lees_config(pad: str) -> Config:
     for b in besluiten:
         buiten = [d for d in b.peildata if not b.bevat(d)]
         if buiten:
-            raise ValueError(f"{b.map}: peildata {buiten} vallen buiten de periode "
+            raise ConfigFout(f"{b.map}: peildata {buiten} vallen buiten de periode "
                              f"van het besluit ({b.in_werking} tot {b.tot})")
     # root (one) or roots (a list); neither: found from the OIN when the RTR is needed.
     roots = bo.get("roots", [])
     roots = [roots] if isinstance(roots, str) else list(roots)
     if bo.get("root"):
         roots.insert(0, bo["root"])
+    catalogus.niet_rijk(bo["oin"], roots)
+    omgeving = ruw.get("omgeving", "prod")
+    if omgeving not in BASE_URLS:
+        raise ConfigFout(f"{pad}: omgeving moet {' of '.join(BASE_URLS)} zijn, niet {omgeving!r}")
     return Config(pad, Bestuursorgaan(bo["naam"], bo["oin"], tuple(dict.fromkeys(roots))),
-                  ruw["regeling"], ruw.get("omgeving", "prod"), besluiten)
+                  regeling, omgeving, besluiten)
 
 
 # ── downloads ────────────────────────────────────────────────────────
@@ -338,8 +374,8 @@ class Archief:
             except catalogus.CatalogusFout as exc:
                 log.info("%s", exc)
         if not roots:
-            raise catalogus.CatalogusFout(f"Geen activiteitenboom gevonden voor OIN {bo.oin}; "
-                                          f"zet 'root' in {self.config.pad}")
+            raise ConfigFout(f"{self.config.pad}: geen activiteitenboom in de RTR voor OIN {bo.oin}; "
+                             "klopt het OIN, of zet 'root' in het JSON-bestand")
         self.config.bestuursorgaan = Bestuursorgaan(bo.naam, bo.oin, tuple(roots))
         log.info("%s: root(s) %s", bo.naam, ", ".join(roots))
 
@@ -1104,7 +1140,7 @@ def main(argv=None) -> int:
     p.add_argument("--stappen", default=",".join(STAPPEN),
                    help=f"komma-gescheiden, uit: {', '.join(STAPPEN)} (standaard: alle)")
     p.add_argument("--rate", type=float, default=2.0, help="verzoeken per seconde aan de RTR")
-    p.add_argument("--tot", default=date.today().isoformat(),
+    p.add_argument("--tot", type=date.fromisoformat, default=date.today(),
                    help="versiegeschiedenis tot en met deze datum (jjjj-mm-dd, standaard: vandaag)")
     p.add_argument("--browser", default=None,
                    help="pad naar een Chromium/Chrome/Edge om de regeling af te drukken")
@@ -1137,11 +1173,23 @@ def main(argv=None) -> int:
         level=logging.INFO, format="%(asctime)s  %(levelname)-7s  %(message)s", datefmt="%H:%M:%S",
         handlers=[logging.StreamHandler(), bestand])
 
+    try:
+        return draai(args, stappen)
+    except ConfigFout as exc:
+        log.error("%s", exc)
+        return 2
+    except catalogus.RijkNietOndersteund as exc:
+        log.error("%s", exc)
+        return 3
+
+
+def draai(args: argparse.Namespace, stappen: list[str]) -> int:
+    """The steps; 1 when the archive misses STTR versions."""
     config = lees_config(args.config)
     client = ArchiefClient(BASE_URLS[config.omgeving], rate=args.rate, cache=args.cache)
     archief = Archief(config, args.uit, client, werkmap=args.werkmap)
     archief.hernoem_mappen()
-    tot = date.fromisoformat(args.tot)
+    tot = args.tot
     if {"rtr", "wijzigingen"} & set(stappen):
         archief.vind_roots(tot)
 
