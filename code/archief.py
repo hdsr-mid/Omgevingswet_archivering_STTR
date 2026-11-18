@@ -2,7 +2,7 @@
 Archive a regeling per definitief besluit: its publications, the whole
 regeling, and every version of the toepasbare regels (STTR) under it.
 
-    python code/archief.py data/archief_CVDR707248.json
+    python code/archief.py                     (data/archief_CVDR707248.json, every step)
     python code/archief.py data/archief_CVDR707248.json --stappen publicaties,bijlagen,regeling
     python code/archief.py data/archief_CVDR707248.json --stappen rtr,wijzigingen,index
 
@@ -30,6 +30,13 @@ took effect.  It is in one of that besluit's full snapshots when it was valid
 on a peildatum; otherwise it gets a ``<date>_gewijzigd`` folder named after
 the day it took effect.  That holds for later modifications and for
 short-lived first uploads alike.
+
+Each run adds to the archive.  A besluit that is complete (see
+``Archief.compleet``) is not fetched again; it only gets new
+``<date>_gewijzigd`` folders while its period is open.  A besluit with only
+an ontwerp gets a folder named after the ontwerp, renamed when the besluit
+comes.  README.txt, README.md and index.csv are written again only when
+something changed.
 """
 
 from __future__ import annotations
@@ -103,9 +110,17 @@ def blad(pub_id: str) -> str:
 
 @dataclass
 class Besluit:
-    besluitdatum: date
+    """One besluit, from its ontwerp to its STTR.
+
+    It can be incomplete: an ontwerp without a besluit yet (no
+    ``besluitdatum``, no ``definitief``), or a besluit whose in-werking date
+    is not known yet (the toestand is not in CVDR).  Only a besluit in werking
+    has a period, and with it toepasbare regels.
+    """
+
+    besluitdatum: date | None
     naam: str
-    in_werking: date
+    in_werking: date | None
     ontwerp: list[dict[str, str]]
     definitief: list[dict[str, str]]
     toestanden: list[dict[str, Any]]
@@ -117,9 +132,13 @@ class Besluit:
 
     @property
     def map(self) -> str:
-        besluit = next((d["id"] for d in self.definitief if d["soort"] == "besluit"),
-                       self.definitief[0]["id"])
-        return f"{self.besluitdatum:%Y%m%d}_{self.naam}_{besluit}"
+        """``<besluitdatum>_<naam>_<besluit>``; before the besluit ``<ontwerp zichtbaar>_<naam>_<ontwerp>``."""
+        if self.definitief:
+            besluit = next((d["id"] for d in self.definitief if d["soort"] == "besluit"),
+                           self.definitief[0]["id"])
+            return f"{self.besluitdatum:%Y%m%d}_{self.naam}_{besluit}"
+        ontwerp = next((d["id"] for d in self.ontwerp if d["soort"] == "ontwerp"), self.ontwerp[0]["id"])
+        return f"{self.zichtbaar['ontwerp']:%Y%m%d}_{self.naam}_{ontwerp}"
 
     def submap(self, fase: str) -> str:
         """``Ontwerp_<jjjjmmdd>`` or ``Definitief_<jjjjmmdd>``: the day it became visible in the DSO."""
@@ -131,8 +150,12 @@ class Besluit:
         """Sets up the regeling (its first toestand) rather than changing it."""
         return any(t["nummer"] == 1 for t in self.toestanden)
 
+    @property
+    def publicaties(self) -> list[dict[str, str]]:
+        return self.ontwerp + self.definitief
+
     def bevat(self, d: date) -> bool:
-        return self.in_werking <= d and (self.tot is None or d < self.tot)
+        return self.in_werking is not None and self.in_werking <= d and (self.tot is None or d < self.tot)
 
 
 @dataclass
@@ -143,12 +166,17 @@ class Config:
     omgeving: str
     besluiten: list[Besluit] = field(default_factory=list)
 
-    def besluit_voor(self, d: date) -> Besluit:
-        """The besluit in whose period *d* falls (the first for anything earlier)."""
-        for b in self.besluiten:
+    @property
+    def in_werking(self) -> list[Besluit]:
+        """The besluiten in werking, by date: the ones with a period and STTR."""
+        return [b for b in self.besluiten if b.in_werking is not None]
+
+    def besluit_voor(self, d: date) -> Besluit | None:
+        """The besluit in whose period *d* falls (the first for anything earlier); None before any."""
+        for b in self.in_werking:
             if b.bevat(d):
                 return b
-        return self.besluiten[0]
+        return next(iter(self.in_werking), None)
 
 
 def lees_config(pad: str) -> Config:
@@ -178,24 +206,36 @@ def _lees_config(pad: str, ruw: dict[str, Any]) -> Config:
     if not re.fullmatch(r"CVDR\d+", regeling.get("cvdr", "")):
         raise ConfigFout(f"{pad}: regeling.cvdr moet een CVDR-nummer zijn (CVDR…), "
                          f"niet {regeling.get('cvdr')!r}")
+    datum = lambda b, k: date.fromisoformat(b[k]) if b.get(k) else None  # noqa: E731
     besluiten = [Besluit(
-        besluitdatum=date.fromisoformat(b["besluitdatum"]), naam=b["naam"],
-        in_werking=date.fromisoformat(b["in_werking"]),
-        ontwerp=b.get("ontwerp", []), definitief=b["definitief"],
+        besluitdatum=datum(b, "besluitdatum"), naam=b["naam"], in_werking=datum(b, "in_werking"),
+        ontwerp=b.get("ontwerp", []), definitief=b.get("definitief", []),
         toestanden=b.get("toestanden", []),
         peildata=[date.fromisoformat(d) for d in b.get("rtr_peildata", [])],
         opmerking=b.get("opmerking", ""),
         zichtbaar={k: date.fromisoformat(v) for k, v in b.get("zichtbaar_in_dso", {}).items()})
         for b in ruw["besluiten"]]
-    for b in besluiten:
+    for nr, b in enumerate(besluiten, 1):
+        wie = f"besluit {nr} ({b.naam})"
+        if not b.publicaties:
+            raise ConfigFout(f"{wie}: geen ontwerp en geen definitief")
+        if b.definitief and not b.besluitdatum:
+            raise ConfigFout(f"{wie}: besluitdatum ontbreekt")
+        if b.in_werking and not b.definitief:
+            raise ConfigFout(f"{wie}: in_werking zonder definitief besluit")
+        if (b.toestanden or b.peildata) and not b.in_werking:
+            raise ConfigFout(f"{wie}: toestanden of rtr_peildata, maar in_werking ontbreekt")
         for fase, docs in (("ontwerp", b.ontwerp), ("besluit", b.definitief)):
             for doc in docs:
                 blad(doc["id"])
             if docs and fase not in b.zichtbaar:
-                raise ConfigFout(f"{b.map}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
+                raise ConfigFout(f"{wie}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
                                  f"{fase} zichtbaar werd in het DSO; de map wordt ernaar genoemd)")
-    besluiten.sort(key=lambda b: b.in_werking)
-    for huidig, volgend in zip(besluiten, besluiten[1:]):
+    # In werking by date, then the rest: a besluit not in werking yet has no period.
+    besluiten.sort(key=lambda b: (b.in_werking is None, b.in_werking or date.min,
+                                  b.besluitdatum or b.zichtbaar.get("ontwerp") or date.min))
+    gaand = [b for b in besluiten if b.in_werking]
+    for huidig, volgend in zip(gaand, gaand[1:]):
         huidig.tot = volgend.in_werking
     for b in besluiten:
         buiten = [d for d in b.peildata if not b.bevat(d)]
@@ -350,6 +390,59 @@ class Archief:
         self.client = client
         # The tool's own state (the version history) stays out of the archive.
         self.werkmap = werkmap or uit
+        # Besluit folders that were complete when the run began: fetched once, never redone.
+        self.af: set[str] = set()
+        # Besluit folders that got new content in this run ("." for the archive itself).
+        self.gewijzigd: set[str] = set()
+
+    def voorbereiden(self) -> None:
+        """Rename what an earlier run named otherwise, then note which besluiten are complete."""
+        self.hernoem_mappen()
+        self.af = {b.map for b in self.config.besluiten if self.compleet(b)}
+        for b in self.config.besluiten:
+            log.info("%s: %s", b.map, "compleet, wordt overgeslagen" if b.map in self.af else "aanvullen")
+
+    def compleet(self, b: Besluit) -> bool:
+        """Everything of the besluit is there, so nothing is fetched again.
+
+        The besluit is in werking, every publication is a PDF in its folder,
+        ``bijlagen.json`` names every publication and every kaart and bijlage
+        it lists is there (by size), every toestand is printed, and every
+        peildatum has a full RTR snapshot.
+        """
+        if not (b.definitief and b.in_werking and b.toestanden and b.peildata):
+            return False
+        for submap, docs in (("Ontwerp", b.ontwerp), ("Definitief", b.definitief)):
+            if not all(self._is_pdf(self.map(b, b.submap(submap), f"{d['id']}_{d['soort']}.pdf"))
+                       for d in docs):
+                return False
+        try:
+            with open(self.map(b, "bijlagen.json"), encoding="utf-8") as f:
+                publicaties = json.load(f)["publicaties"]
+        except (OSError, ValueError, KeyError):
+            return False
+        for d in b.publicaties:
+            if d["id"] not in publicaties:
+                return False
+            for x in publicaties[d["id"]].get("bijlagen", []):
+                if x.get("bestand") and not x.get("identiek_aan"):
+                    pad = self.map(b, *x["bestand"].split("/"))
+                    if not os.path.isfile(pad) or os.path.getsize(pad) != x.get("bytes"):
+                        return False
+        for t in b.toestanden:
+            if not self._is_pdf(self._toestand_pad(b, t)):
+                return False
+        return all(os.path.exists(self.map(b, "RTR", f"{d:%Y%m%d}_volledig", "STTR", "manifest.json"))
+                   for d in b.peildata)
+
+    def _toestand_pad(self, b: Besluit, t: dict[str, Any]) -> str:
+        vanaf = date.fromisoformat(t["geldig_vanaf"])
+        return self.map(b, b.submap("Definitief"),
+                        f"regeling_toestand-{t['nummer']}_geldend-vanaf-{vanaf:%Y%m%d}.pdf")
+
+    def te_doen(self) -> list[Besluit]:
+        """The besluiten that were not complete when the run began."""
+        return [b for b in self.config.besluiten if b.map not in self.af]
 
     @property
     def historiepad(self) -> str:
@@ -368,7 +461,7 @@ class Archief:
         if bo.roots:
             return
         roots: dict[str, None] = {}
-        for d in sorted({b.in_werking for b in self.config.besluiten if b.in_werking <= tot} | {tot}):
+        for d in sorted({b.in_werking for b in self.config.in_werking if b.in_werking <= tot} | {tot}):
             try:
                 roots.update(dict.fromkeys(catalogus.zoek_op_oin(self.client, bo.oin, d.isoformat()).roots))
             except catalogus.CatalogusFout as exc:
@@ -380,12 +473,30 @@ class Archief:
         log.info("%s: root(s) %s", bo.naam, ", ".join(roots))
 
     def hernoem_mappen(self) -> None:
-        """Give ``Ontwerp`` and ``Definitief`` of an earlier archive their current name.
+        """Give folders of an earlier run their current name.
 
-        An earlier archive has them without a date or with another one.  The
-        folders move as a whole, and the paths in ``bijlagen.json`` follow, so
-        nothing has to be fetched again.
+        A besluit folder that was named after the ontwerp, before the besluit
+        was there, is found by the id it ends with (``…_<id>``, any of the
+        besluit's publications) and gets the besluit's name.  ``Ontwerp`` and
+        ``Definitief`` of an earlier archive have no date or another one.
+        Folders move as a whole, and the paths in ``bijlagen.json`` (relative
+        to the besluit folder) follow, so nothing has to be fetched again.
         """
+        namen = {b.map for b in self.config.besluiten}
+        bestaand = sorted(n for n in os.listdir(self.uit) if os.path.isdir(os.path.join(self.uit, n))) \
+            if os.path.isdir(self.uit) else []
+        for b in self.config.besluiten:
+            if os.path.exists(self.map(b)):
+                continue
+            kandidaten = [n for n in bestaand if n not in namen
+                          and any(n.endswith(f"_{d['id']}") for d in b.publicaties)]
+            if len(kandidaten) == 1:
+                os.replace(os.path.join(self.uit, kandidaten[0]), self.map(b))
+                bestaand.remove(kandidaten[0])
+                self.gewijzigd.add(b.map)
+                log.info("%s/ heet nu %s/", kandidaten[0], b.map)
+            elif kandidaten:
+                log.warning("%s: niet hernoemd, meerdere mappen passen: %s", b.map, ", ".join(kandidaten))
         for b in self.config.besluiten:
             hernoemd = {}
             wortel = self.map(b)
@@ -397,6 +508,7 @@ class Archief:
                 if len(oude) == 1 and not os.path.exists(os.path.join(wortel, nieuw)):
                     os.replace(os.path.join(wortel, oude[0]), os.path.join(wortel, nieuw))
                     hernoemd[oude[0] + "/"] = nieuw + "/"
+                    self.gewijzigd.add(b.map)
                     log.info("%s: %s/ heet nu %s/", b.map, oude[0], nieuw)
             pad = self.map(b, "bijlagen.json")
             if hernoemd and os.path.exists(pad):
@@ -414,7 +526,7 @@ class Archief:
     # publicaties ─────────────────────────────────────────────────────
 
     def publicaties(self) -> None:
-        for b in self.config.besluiten:
+        for b in self.te_doen():
             for submap, documenten in (("Ontwerp", b.ontwerp), ("Definitief", b.definitief)):
                 for doc in documenten:
                     pad = self.map(b, b.submap(submap), f"{doc['id']}_{doc['soort']}.pdf")
@@ -424,6 +536,7 @@ class Archief:
                     if not inhoud.startswith(b"%PDF"):
                         raise RuntimeError(f"{doc['id']}: geen PDF ontvangen")
                     schrijf_atomair(pad, inhoud)
+                    self.gewijzigd.add(b.map)
                     log.info("%s: %s (%.1f MB)", b.map, os.path.basename(pad), len(inhoud) / 1e6)
 
     @staticmethod
@@ -452,12 +565,14 @@ class Archief:
         must name the version it was asked for, or nothing is written.  This
         step owns ``kaarten/`` and the ``bijlagen/`` folders.
         """
-        for b in self.config.besluiten:
+        for b in self.te_doen():
             pad = self.map(b, "bijlagen.json")
             oud: dict[str, Any] = {}
+            vorige = b""
             if os.path.exists(pad):
-                with open(pad, encoding="utf-8") as f:
-                    oud = json.load(f).get("publicaties", {})
+                with open(pad, "rb") as f:
+                    vorige = f.read()
+                oud = json.loads(vorige).get("publicaties", {})
             # 1. What each publication carries.
             plan = []
             for submap, documenten in (("Ontwerp", b.ontwerp), ("Definitief", b.definitief)):
@@ -519,18 +634,20 @@ class Archief:
                 for naam in sorted(os.listdir(map_)) if os.path.isdir(map_) else []:
                     if f"{sub}/{naam}" not in bewaard:
                         os.remove(os.path.join(map_, naam))
+                        self.gewijzigd.add(b.map)
                         log.info("%s: %s/%s niet meer nodig, verwijderd", b.map, sub, naam)
                 if os.path.isdir(map_) and not os.listdir(map_):
                     os.rmdir(map_)
-            with open(pad, "w", encoding="utf-8") as f:
-                json.dump({"toelichting": "Per publicatie de kaarten (GIO's, GML), informatieobjecten "
-                                          "en externe bijlagen die ze vaststelt of meestuurt: waar "
-                                          "het bestand vandaan komt, en zijn SHA-256. Een kaart van "
-                                          "het ontwerp die het besluit ook vaststelt, staat alleen "
-                                          "in de versie van het besluit (vastgesteld_als). Een "
-                                          "bijlage die gelijk is aan een eerdere staat er één keer "
-                                          "(identiek_aan).",
-                           "publicaties": publicaties}, f, ensure_ascii=False, indent=2)
+            nieuw = {"toelichting": "Per publicatie de kaarten (GIO's, GML), informatieobjecten en "
+                                    "externe bijlagen die ze vaststelt of meestuurt: waar het bestand "
+                                    "vandaan komt, en zijn SHA-256. Een kaart van het ontwerp die het "
+                                    "besluit ook vaststelt, staat alleen in de versie van het besluit "
+                                    "(vastgesteld_als). Een bijlage die gelijk is aan een eerdere staat "
+                                    "er één keer (identiek_aan).",
+                     "publicaties": publicaties}
+            if not vorige or json.loads(vorige) != nieuw:
+                schrijf_atomair(pad, json.dumps(nieuw, ensure_ascii=False, indent=2).encode("utf-8"))
+                self.gewijzigd.add(b.map)
             n = sum(len(p["bijlagen"]) for p in publicaties.values())
             log.info("%s: %d bijlagen, %d bestanden", b.map, n, len(bewaard))
 
@@ -586,23 +703,23 @@ class Archief:
         with the source and print date in the footer.  The page must show the
         expected "Geldend van" date, or nothing is written.
         """
-        taken = []
-        for b in self.config.besluiten:
+        taken, van = [], {}
+        for b in self.te_doen():
             for t in b.toestanden:
-                vanaf = date.fromisoformat(t["geldig_vanaf"])
-                pad = self.map(b, b.submap("Definitief"),
-                               f"regeling_toestand-{t['nummer']}_geldend-vanaf-{vanaf:%Y%m%d}.pdf")
+                pad = self._toestand_pad(b, t)
                 if not self._is_pdf(pad):
                     url = CVDR_TOESTAND.format(regeling=self.config.regeling["cvdr"],
                                                toestand=t["nummer"])
-                    taken.append((url, vanaf, pad))
+                    taken.append((url, date.fromisoformat(t["geldig_vanaf"]), pad))
+                    van[pad] = b.map
         if taken:
             print_pdfs(taken, browser)
+        self.gewijzigd |= {van[pad] for _, _, pad in taken if self._is_pdf(pad)}
 
     # RTR: volledige vastleggingen ───────────────────────────────────
 
     def rtr(self) -> None:
-        for b in self.config.besluiten:
+        for b in self.te_doen():
             for peildatum in b.peildata:
                 uit = self.map(b, "RTR", f"{peildatum:%Y%m%d}_volledig")
                 if os.path.exists(os.path.join(uit, "STTR", "manifest.json")):
@@ -617,6 +734,7 @@ class Archief:
                     overheid=self.config.bestuursorgaan.naam)
                 RTR(args, self.client, uitvoer=uit, datumveld="begin",
                     bestuursorgaan=self.config.bestuursorgaan).archive_activities()
+                self.gewijzigd.add(b.map)
 
     def vastleggingen(self) -> dict[str, dict[str, Any]]:
         """Every full snapshot's manifest, keyed by its folder (relative)."""
@@ -634,9 +752,9 @@ class Archief:
     def historie(self, tot: date) -> Versiehistorie:
         h = Versiehistorie(self.historiepad,
                            self.config.bestuursorgaan, self.client.base_url)
-        eerste = self.config.besluiten[0].in_werking
+        eerste = self.config.in_werking[0].in_werking
         walks = set(maandelijks(eerste, tot)) | {tot}
-        walks |= {d for b in self.config.besluiten for d in b.peildata + [b.in_werking] if d <= tot}
+        walks |= {d for b in self.config.in_werking for d in b.peildata + [b.in_werking] if d <= tot}
         nieuw = h.loop_boom(self.client, walks)
         log.info("Boom: %d nieuwe regelbeheerobjecten", nieuw)
         nieuw = h.volg_ketens(self.client, eerste, tot)
@@ -653,59 +771,93 @@ class Archief:
         return h
 
     def wijzigingen(self, tot: date) -> None:
+        """Every STTR version no full snapshot holds, in a ``<date>_gewijzigd`` folder of its besluit.
+
+        For a besluit that is not complete, these folders are derived from
+        the snapshots and the history, so this step owns them: one it no
+        longer plans goes, and files and manifest follow the history.  A
+        complete besluit only gets new folders, and what is in it stays as it
+        is: changes keep coming under the newest besluit until the next one
+        is in werking.
+        """
+        if not self.config.in_werking:
+            log.info("Nog geen besluit in werking: geen toepasbare regels")
+            return
         h = self.historie(tot)
         in_vastlegging: dict[str, set[str]] = defaultdict(set)
         for rel, manifest in self.vastleggingen().items():
             in_vastlegging[rel.split(os.sep)[0]].update(s["sttrId"] for s in manifest["sttrs"])
+        gepland = verdeel(self.config, h.data["refs"], in_vastlegging, tot, h.omschrijving)
 
-        per_map = {os.path.join(self.uit, besluitmap, "RTR", naam): items
-                   for (besluitmap, naam), items in
-                   verdeel(self.config, h.data["refs"], in_vastlegging, tot,
-                           h.omschrijving).items()}
-        # The "<date>_gewijzigd" folders are derived from the snapshots and the
-        # history, so this step owns them: one it no longer plans goes.
-        for b in self.config.besluiten:
+        for b in self.te_doen():
             rtr_map = self.map(b, "RTR")
             for naam in sorted(os.listdir(rtr_map)) if os.path.isdir(rtr_map) else []:
-                pad = os.path.join(rtr_map, naam)
-                if GEWIJZIGD.match(naam) and os.path.isdir(pad) and pad not in per_map:
-                    shutil.rmtree(pad)
+                if GEWIJZIGD.match(naam) and os.path.isdir(os.path.join(rtr_map, naam)) \
+                        and (b.map, naam) not in gepland:
+                    shutil.rmtree(os.path.join(rtr_map, naam))
+                    self.gewijzigd.add(b.map)
                     log.info("%s/RTR/%s: niet meer nodig, verwijderd", b.map, naam)
 
-        for map_pad, items in sorted(per_map.items()):
-            sttr_map = os.path.join(map_pad, "STTR")
-            os.makedirs(sttr_map, exist_ok=True)
-            gepland = {f"STTR_{v['sttrId']}_{v['activiteit'].split('.')[-1]}_"
-                       f"{v['soort'].replace(' ', '_')}.xml" for v in items if not v.get("vervallen")}
-            for naam in os.listdir(sttr_map):
-                if naam.endswith(".xml") and naam not in gepland:
-                    os.remove(os.path.join(sttr_map, naam))
-            manifest = []
-            for v in sorted(items, key=lambda x: (x["activiteit"], x["soort"])):
-                if v.get("vervallen"):
-                    manifest.append(v)
-                    continue
-                naam = (f"STTR_{v['sttrId']}_{v['activiteit'].split('.')[-1]}_"
-                        f"{v['soort'].replace(' ', '_')}.xml")
-                inhoud = self.client.download_sttr(v["sttrId"])
-                pad = os.path.join(sttr_map, naam)
-                if not os.path.exists(pad):
-                    schrijf_atomair(pad, inhoud)
-                manifest.append({"bestand": naam, **{k: v[k] for k in (
-                    "activiteit", "omschrijving", "soort", "sttrId", "begindatum",
-                    "einddatum", "laatsteWijzigingDatum", "ref", "vervangt", "vervangen_door")},
-                    "sha256": hashlib.sha256(inhoud).hexdigest()})
-            with open(os.path.join(sttr_map, "manifest.json"), "w", encoding="utf-8") as f:
-                json.dump({"bestuursorgaan": self.config.bestuursorgaan.naam,
-                           "datum": os.path.basename(map_pad)[:8],
-                           "toelichting": "STTR-versies die op deze dag ingingen en niet in een "
-                                          "volledige vastlegging van dit besluit staan, en "
-                                          "regelbeheerobjecten die op deze dag vervielen.",
-                           "bron": self.client.base_url, "sttrs": manifest},
-                          f, ensure_ascii=False, indent=2)
-            log.info("%s: %d versies, %d vervallen", os.path.relpath(map_pad, self.uit),
-                     sum(1 for m in manifest if not m.get("vervallen")),
-                     sum(1 for m in manifest if m.get("vervallen")))
+        for (besluitmap, naam), items in sorted(gepland.items()):
+            map_pad = os.path.join(self.uit, besluitmap, "RTR", naam)
+            manifest_pad = os.path.join(map_pad, "STTR", "manifest.json")
+            if besluitmap in self.af and os.path.exists(manifest_pad):
+                with open(manifest_pad, encoding="utf-8") as f:
+                    er = {s.get("sttrId") for s in json.load(f)["sttrs"]}
+                niet = sorted(v["sttrId"] for v in items if not v.get("vervallen") and v["sttrId"] not in er)
+                if niet:
+                    log.warning("%s/RTR/%s blijft zoals het is (besluit compleet); niet toegevoegd: %s",
+                                besluitmap, naam, ", ".join(niet))
+                continue
+            if self._schrijf_gewijzigd(map_pad, items):
+                self.gewijzigd.add(besluitmap)
+
+    def _schrijf_gewijzigd(self, map_pad: str, items: list[dict[str, Any]]) -> bool:
+        """One ``<date>_gewijzigd`` folder: its STTR files and manifest. True when anything changed."""
+        sttr_map = os.path.join(map_pad, "STTR")
+        os.makedirs(sttr_map, exist_ok=True)
+        veranderd = False
+        bestandsnaam = lambda v: (f"STTR_{v['sttrId']}_{v['activiteit'].split('.')[-1]}_"  # noqa: E731
+                                  f"{v['soort'].replace(' ', '_')}.xml")
+        gepland = {bestandsnaam(v) for v in items if not v.get("vervallen")}
+        for naam in os.listdir(sttr_map):
+            if naam.endswith(".xml") and naam not in gepland:
+                os.remove(os.path.join(sttr_map, naam))
+                veranderd = True
+        manifest = []
+        for v in sorted(items, key=lambda x: (x["activiteit"], x["soort"])):
+            if v.get("vervallen"):
+                manifest.append(v)
+                continue
+            naam = bestandsnaam(v)
+            inhoud = self.client.download_sttr(v["sttrId"])
+            pad = os.path.join(sttr_map, naam)
+            if not os.path.exists(pad):
+                schrijf_atomair(pad, inhoud)
+                veranderd = True
+            manifest.append({"bestand": naam, **{k: v[k] for k in (
+                "activiteit", "omschrijving", "soort", "sttrId", "begindatum",
+                "einddatum", "laatsteWijzigingDatum", "ref", "vervangt", "vervangen_door")},
+                "sha256": hashlib.sha256(inhoud).hexdigest()})
+        nieuw = {"bestuursorgaan": self.config.bestuursorgaan.naam,
+                 "datum": os.path.basename(map_pad)[:8],
+                 "toelichting": "STTR-versies die op deze dag ingingen en niet in een "
+                                "volledige vastlegging van dit besluit staan, en "
+                                "regelbeheerobjecten die op deze dag vervielen.",
+                 "bron": self.client.base_url, "sttrs": manifest}
+        pad = os.path.join(sttr_map, "manifest.json")
+        vorige = None
+        if os.path.exists(pad):
+            with open(pad, encoding="utf-8") as f:
+                vorige = json.load(f)
+        if vorige != nieuw:
+            with open(pad, "w", encoding="utf-8") as f:
+                json.dump(nieuw, f, ensure_ascii=False, indent=2)
+            veranderd = True
+        log.info("%s: %d versies, %d vervallen%s", os.path.relpath(map_pad, self.uit),
+                 sum(1 for m in manifest if not m.get("vervallen")),
+                 sum(1 for m in manifest if m.get("vervallen")), "" if veranderd else " (ongewijzigd)")
+        return veranderd
 
     # index ───────────────────────────────────────────────────────────
 
@@ -726,10 +878,6 @@ class Archief:
                         gearchiveerd[s["sttrId"]].append(rel)
         ontbreekt = sorted(alle - set(gearchiveerd))
 
-        weg = verdwenen(h.data)
-        nakijken = {b.map: self._readme_txt(b, mappen, [v for v in weg if self.config.besluit_voor(
-            date.fromisoformat(v["eerst_weg"])).map == b.map]) for b in self.config.besluiten}
-        self._readme(mappen, len(alle), len(alle) - len(ontbreekt), ontbreekt, weg, nakijken)
         # What earlier versions kept in the archive and now lives in the werkmap
         # (or, for the config, in the repository).
         for naam in (os.path.basename(self.config.pad), "versiehistorie.json", "archief.log"):
@@ -737,7 +885,32 @@ class Archief:
             if self.werkmap != self.uit and os.path.isfile(pad) \
                     and os.path.abspath(pad) != os.path.abspath(self.config.pad):
                 os.remove(pad)
+                self.gewijzigd.add(".")
                 log.info("%s: hoort niet in het archief, verwijderd", naam)
+
+        weg_per: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for v in verdwenen(h.data):
+            b = self.config.besluit_voor(date.fromisoformat(v["eerst_weg"]))
+            if b:
+                weg_per[b.map].append(v)
+        # README.txt of a complete besluit is only written again when its folder
+        # got something new; that of another one also when it would say more.
+        nakijken = {}
+        for b in self.config.besluiten:
+            pad = self.map(b, "README.txt")
+            if b.map in self.gewijzigd or not os.path.exists(pad) or b.map not in self.af:
+                nakijken[b.map] = self._readme_txt(b, mappen, weg_per[b.map],
+                                                   alleen_als_anders=b.map not in self.gewijzigd)
+            else:
+                with open(pad, encoding="utf-8") as f:
+                    nakijken[b.map] = sum(1 for r in f if r.startswith("!"))
+        weg = [v for b in self.config.besluiten for v in weg_per[b.map]]
+        if self.gewijzigd or not os.path.exists(os.path.join(self.uit, "README.md")):
+            self._readme(mappen, len(alle), len(alle) - len(ontbreekt), ontbreekt, weg, nakijken)
+        elif os.path.exists(os.path.join(self.uit, "index.csv")):
+            log.info("Archief ongewijzigd: README.md en index.csv blijven zoals ze zijn")
+            return {"versies": len(alle), "gearchiveerd": len(alle) - len(ontbreekt),
+                    "ontbreekt": ontbreekt}
         # Last, so the hashes cover the README files just written.
         with open(os.path.join(self.uit, "index.csv"), "w", encoding="utf-8", newline="") as f:
             w = csv.writer(f, delimiter=";")
@@ -754,7 +927,7 @@ class Archief:
                 "ontbreekt": ontbreekt}
 
     def _readme_txt(self, b: Besluit, mappen: dict[str, dict[str, Any]],
-                    weg: list[dict[str, Any]]) -> int:
+                    weg: list[dict[str, Any]], alleen_als_anders: bool = False) -> int:
         """README.txt of a besluit folder; returns the number of '!' lines.
 
         Section by section what is in the folder, and with a '!' in front
@@ -762,6 +935,11 @@ class Archief:
         bijlage that was not downloaded, a toestand that was not printed.  A
         file put in the folder by hand is listed as the inspraakrapport when
         its name says so, otherwise under "overige bestanden".
+
+        Everything from a line starting with ``Handmatig`` to the end is the
+        user's own and is kept.  A README.txt that is replaced is first copied
+        to ``vorige-readme/`` in the werkmap.  With *alleen_als_anders* one
+        that says the same, apart from the day it was made, is left alone.
         """
         T = "\t"
         bijl: dict[str, Any] = {}
@@ -892,7 +1070,7 @@ class Archief:
                 f"volledige vastlegging op {dag}, {n} STTR-bestanden, status.xlsx, werkingsgebieden.txt"
                 if naam.endswith("_volledig") else f"gewijzigd op {dag}, {n} STTR-bestanden")
                 + (f", {vervallen} vervallen" if vervallen else ""))
-        if not r:
+        if not r and b.in_werking:
             ontbreekt(r, "RTR/: geen toepasbare regels vastgelegd")
         overig = [x for x in alle if x not in genoemd]
         if overig:
@@ -907,12 +1085,29 @@ class Archief:
                          f"{date.fromisoformat(v['laatst_gezien']):%d-%m-%Y}, weg op "
                          f"{date.fromisoformat(v['eerst_weg']):%d-%m-%Y}")
 
-        bekendmaking = ", ".join(d["id"] for d in besluit)
-        kop = [self.config.regeling["titel"],
-               f"Besluit van {b.besluitdatum:%d-%m-%Y}, bekendmaking {bekendmaking}",
-               f"In werking {b.in_werking:%d-%m-%Y}" + (f" tot {b.tot:%d-%m-%Y}" if b.tot else "")
-               + f"; toestand {', '.join(str(t['nummer']) for t in b.toestanden)} van "
-               f"{self.config.regeling['cvdr']}", ""]
+        pad = self.map(b, "README.txt")
+        oud = None
+        if os.path.exists(pad):
+            with open(pad, encoding="utf-8", newline="") as f:
+                oud = f.read().replace("\r\n", "\n")
+        m = re.search(r"(?m)^Handmatig", oud or "")
+        handmatig = oud[m.start():] if m else ""
+        uitroep += sum(1 for r in handmatig.split("\n") if r.startswith("!"))
+
+        if besluit:
+            kop = [self.config.regeling["titel"],
+                   f"Besluit van {b.besluitdatum:%d-%m-%Y}, bekendmaking {', '.join(d['id'] for d in besluit)}"]
+        else:
+            kop = [self.config.regeling["titel"],
+                   f"Ontwerp van {b.zichtbaar['ontwerp']:%d-%m-%Y}, bekendmaking "
+                   f"{', '.join(d['id'] for d in ontwerp or b.ontwerp)}; nog geen besluit"]
+        if b.in_werking:
+            kop.append(f"In werking {b.in_werking:%d-%m-%Y}" + (f" tot {b.tot:%d-%m-%Y}" if b.tot else "")
+                       + (f"; toestand {', '.join(str(t['nummer']) for t in b.toestanden)} van "
+                          f"{self.config.regeling['cvdr']}" if b.toestanden else ""))
+        elif besluit:
+            kop.append("In werking: nog niet bekend")
+        kop.append("")
         if b.opmerking:
             kop += [b.opmerking, ""]
         kop += [f"Samengesteld op {date.today():%d-%m-%Y} met code/archief.py.",
@@ -938,12 +1133,24 @@ class Archief:
             "Uit de RTR verdwenen: de RTR haalt activiteiten en regelbeheerobjecten uit de boom zonder "
             "hun STTR-versies te beëindigen. Hun bestanden staan in dit archief; de lijst zegt wanneer "
             "ze verdwenen (tussen twee rondes door de boom).")]
-        os.makedirs(self.map(b), exist_ok=True)  # a besluit nothing was fetched for yet
-        with open(self.map(b, "README.txt"), "w", encoding="utf-8", newline="\r\n") as f:
-            f.write("\n".join(regels))
+        tekst = "\n".join(regels) + ("\n" + handmatig if handmatig else "")
+        zonder_datum = lambda t: re.sub(r"(?m)^Samengesteld op [\d-]+ ", "", t)  # noqa: E731
         leesmij = self.map(b, "LEESMIJ.md")
         if os.path.exists(leesmij):
             os.remove(leesmij)
+            self.gewijzigd.add(b.map)
+        if oud is not None and (oud == tekst or alleen_als_anders and zonder_datum(oud) == zonder_datum(tekst)):
+            return uitroep
+        if oud is not None:
+            vorige = os.path.join(self.werkmap, "vorige-readme",
+                                  f"{b.map}_{time.strftime('%Y%m%d-%H%M%S')}_README.txt")
+            os.makedirs(os.path.dirname(vorige), exist_ok=True)
+            shutil.copy2(pad, vorige)
+            log.info("%s: README.txt vernieuwd; de vorige staat in %s", b.map, vorige)
+        os.makedirs(self.map(b), exist_ok=True)  # a besluit nothing was fetched for yet
+        with open(pad, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write(tekst)
+        self.gewijzigd.add(b.map)
         return uitroep
 
     def _readme(self, mappen, totaal: int, gearchiveerd: int, ontbreekt: list[str],
@@ -970,8 +1177,11 @@ class Archief:
                 ("kaarten", [self.map(b, "kaarten")]),
                 ("bijlagen", [self.map(b, b.submap("Ontwerp"), "bijlagen") if b.ontwerp else "",
                               self.map(b, b.submap("Definitief"), "bijlagen")]))}
+            besluitdatum = (f"{b.besluitdatum:%d-%m-%Y}" if b.besluitdatum
+                            else f"ontwerp {b.zichtbaar['ontwerp']:%d-%m-%Y}")
+            in_werking = f"{b.in_werking:%d-%m-%Y}" if b.in_werking else "-"
             regels.append(
-                f"| {b.besluitdatum:%d-%m-%Y} | `{b.map}` | {b.in_werking:%d-%m-%Y} | "
+                f"| {besluitdatum} | `{b.map}` | {in_werking} | "
                 f"{len(b.ontwerp)} | {len(b.definitief)} + {len(b.toestanden)} regeling | "
                 f"{tel['kaarten']} | {tel['bijlagen']} | {vast or '-'} | {gew} dag(en) | "
                 f"{nakijken.get(b.map, 0)} |")
@@ -1013,6 +1223,8 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
         for i, v in enumerate(versies):
             begin = nl_datum(v["begindatum"])
             b = config.besluit_voor(begin)
+            if b is None:
+                continue
             if str(v["sttrId"]) in in_vastlegging.get(b.map, set()):
                 continue
             uit[(b.map, f"{begin:%Y%m%d}_gewijzigd")].append({
@@ -1022,8 +1234,8 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
                 "vervangen_door": str(versies[i + 1]["sttrId"]) if i + 1 < len(versies) else None})
         if versies and versies[-1].get("einddatum"):
             weg = nl_datum(versies[-1]["einddatum"]) + timedelta(days=1)
-            if weg <= tot:
-                b = config.besluit_voor(weg)
+            b = config.besluit_voor(weg)
+            if weg <= tot and b is not None:
                 uit[(b.map, f"{weg:%Y%m%d}_gewijzigd")].append({
                     "vervallen": True, "ref": ref, "activiteit": r["activiteit"],
                     "soort": r["label"], "omschrijving": omschrijving(r["activiteit"]),
@@ -1136,7 +1348,9 @@ def main(argv=None) -> int:
     basis = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser(description="Archiveert een regeling per definitief besluit: "
                                             "publicaties, hele regeling en alle toepasbare regels.")
-    p.add_argument("config", help="JSON met het bestuursorgaan, de regeling en de besluiten")
+    p.add_argument("config", nargs="?", default=os.path.join(basis, "data", "archief_CVDR707248.json"),
+                   help="JSON met het bestuursorgaan, de regeling en de besluiten "
+                        "(standaard: data/archief_CVDR707248.json)")
     p.add_argument("--uit", default=os.path.join(basis, "archief"), help="doelmap (standaard: archief/)")
     p.add_argument("--stappen", default=",".join(STAPPEN),
                    help=f"komma-gescheiden, uit: {', '.join(STAPPEN)} (standaard: alle)")
@@ -1189,7 +1403,7 @@ def draai(args: argparse.Namespace, stappen: list[str]) -> int:
     config = lees_config(args.config)
     client = ArchiefClient(BASE_URLS[config.omgeving], rate=args.rate, cache=args.cache)
     archief = Archief(config, args.uit, client, werkmap=args.werkmap)
-    archief.hernoem_mappen()
+    archief.voorbereiden()
     tot = args.tot
     if {"rtr", "wijzigingen"} & set(stappen):
         archief.vind_roots(tot)

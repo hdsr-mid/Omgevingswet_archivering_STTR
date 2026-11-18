@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from datetime import date
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "code"))
 
@@ -258,14 +259,192 @@ class Roots(unittest.TestCase):
         self.assertEqual(client.gevraagd, [])
 
 
-class Verdeel(unittest.TestCase):
-    """Every version is filed exactly under the besluit it took effect in."""
+def alleen_ontwerp(zichtbaar, ontwerp_id, naam="wijzigingsbesluit"):
+    return {"naam": naam, "zichtbaar_in_dso": {"ontwerp": zichtbaar},
+            "ontwerp": [{"id": ontwerp_id, "soort": "ontwerp", "titel": "Ontwerp"}]}
+
+
+def maak_bestand(pad, inhoud=b"%PDF-1.4"):
+    os.makedirs(os.path.dirname(pad), exist_ok=True)
+    with open(pad, "wb") as f:
+        f.write(inhoud)
+
+
+class Onvolledig(unittest.TestCase):
+    """A besluit with only an ontwerp, or not yet in werking."""
+
+    def test_alleen_ontwerp(self):
+        c = config([besluit("2025-07-15", "2025-07-24", ["2025-08-01"], "wsb-2025-90002"),
+                    alleen_ontwerp("2026-06-05", "wsb-2026-90010")])
+        self.assertEqual([b.map for b in c.besluiten],
+                         ["20250715_besluit_wsb-2025-90002", "20260605_wijzigingsbesluit_wsb-2026-90010"])
+        self.assertIsNone(c.besluiten[0].tot)  # an ontwerp does not end a period
+        self.assertEqual(c.besluit_voor(date(2026, 12, 1)), c.besluiten[0])
+
+    def test_besluit_nog_niet_in_werking(self):
+        b = besluit("2026-09-22", "2026-10-07", [], "wsb-2026-90020")
+        del b["in_werking"]
+        c = config([besluit("2025-07-15", "2025-07-24", [], "wsb-2025-90002"), b])
+        self.assertEqual(c.besluiten[1].map, "20260922_besluit_wsb-2026-90020")
+        self.assertIsNone(c.besluiten[0].tot)
+        self.assertFalse(c.besluiten[1].bevat(date(2026, 12, 1)))
+        self.assertEqual(c.in_werking, c.besluiten[:1])
+
+    def test_geen_besluit_in_werking(self):
+        c = config([alleen_ontwerp("2026-06-05", "wsb-2026-90010")])
+        self.assertIsNone(c.besluit_voor(date(2026, 12, 1)))
+        self.assertEqual(archief.verdeel(c, Verdeel.refs(), {}, date(2026, 12, 1)), {})
+
+    def test_onvolledig_is_fout(self):
+        zonder_besluit = dict(alleen_ontwerp("2026-06-05", "wsb-2026-90010"), in_werking="2026-10-07")
+        peil = dict(alleen_ontwerp("2026-06-05", "wsb-2026-90010"), rtr_peildata=["2026-10-10"])
+        zonder_datum = besluit("2026-09-22", "2026-10-07", [], "wsb-2026-90020")
+        del zonder_datum["besluitdatum"]
+        leeg = {"naam": "x"}
+        for naam, b, melding in (("in werking zonder besluit", zonder_besluit, "in_werking zonder"),
+                                 ("peildata zonder in werking", peil, "in_werking ontbreekt"),
+                                 ("besluit zonder datum", zonder_datum, "besluitdatum ontbreekt"),
+                                 ("niets", leeg, "geen ontwerp en geen definitief")):
+            with self.subTest(naam), self.assertRaisesRegex(archief.ConfigFout, melding):
+                config([b])
+
+
+class Compleet(unittest.TestCase):
+    """What is complete is not fetched again; an ontwerp folder follows its besluit."""
 
     def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.uit = tmp.name
+        b = besluit("2025-07-15", "2025-07-24", ["2025-08-01"], "wsb-2025-90002")
+        b["zichtbaar_in_dso"] = {"ontwerp": "2025-05-14", "besluit": "2025-07-24"}
+        b["ontwerp"] = [{"id": "wsb-2025-90001", "soort": "ontwerp", "titel": "o"}]
+        b["toestanden"] = [{"nummer": 5, "geldig_vanaf": "2025-07-24"}]
+        self.c = config([b])
+        self.b = self.c.besluiten[0]
+        self.a = archief.Archief(self.c, self.uit, client=None)
+        m = lambda *d: os.path.join(self.uit, self.b.map, *d)  # noqa: E731
+        maak_bestand(m("Ontwerp_20250514", "wsb-2025-90001_ontwerp.pdf"))
+        maak_bestand(m("Definitief_20250724", "wsb-2025-90002_besluit.pdf"))
+        maak_bestand(m("Definitief_20250724", "regeling_toestand-5_geldend-vanaf-20250724.pdf"))
+        maak_bestand(m("RTR", "20250801_volledig", "STTR", "manifest.json"), b'{"sttrs": []}')
+        maak_bestand(m("kaarten", "WG_1.gml"), b"<gml/>")
+        maak_bestand(m("bijlagen.json"), json.dumps({"publicaties": {
+            "wsb-2025-90001": {"bijlagen": []},
+            "wsb-2025-90002": {"bijlagen": [{"soort": "kaart", "bestand": "kaarten/WG_1.gml", "bytes": 6}]}}}
+        ).encode())
+        self.m = m
+
+    def test_compleet_en_wat_ontbreekt(self):
+        self.assertTrue(self.a.compleet(self.b))
+        for rel in (("Ontwerp_20250514", "wsb-2025-90001_ontwerp.pdf"),
+                    ("Definitief_20250724", "regeling_toestand-5_geldend-vanaf-20250724.pdf"),
+                    ("RTR", "20250801_volledig", "STTR", "manifest.json"), ("kaarten", "WG_1.gml"),
+                    ("bijlagen.json",)):
+            with self.subTest(rel):
+                with open(self.m(*rel), "rb") as f:
+                    bewaard = f.read()
+                os.remove(self.m(*rel))
+                self.assertFalse(self.a.compleet(self.b))
+                maak_bestand(self.m(*rel), bewaard)
+        maak_bestand(self.m("kaarten", "WG_1.gml"), b"<gml>anders</gml>")  # another size
+        self.assertFalse(self.a.compleet(self.b))
+
+    def test_compleet_wordt_niet_opnieuw_gehaald(self):
+        def niet(*_, **__):
+            raise AssertionError("niets ophalen voor een compleet besluit")
+        originelen = archief.haal, archief.publicatie_metadata
+        self.addCleanup(lambda: (setattr(archief, "haal", originelen[0]),
+                                 setattr(archief, "publicatie_metadata", originelen[1])))
+        archief.haal = archief.publicatie_metadata = niet
+        self.a.voorbereiden()
+        self.assertEqual(self.a.af, {self.b.map})
+        self.a.publicaties()
+        self.a.bijlagen()
+        self.a.regeling(None)
+        self.a.rtr()
+        self.assertEqual(self.a.gewijzigd, set())
+
+    def test_ontwerpmap_krijgt_de_naam_van_het_besluit(self):
+        vroeger = config([alleen_ontwerp("2026-06-05", "wsb-2026-90010")]).besluiten[0]
+        maak_bestand(os.path.join(self.uit, vroeger.map, "Ontwerp_20260605", "wsb-2026-90010_ontwerp.pdf"))
+        b = dict(alleen_ontwerp("2026-06-05", "wsb-2026-90010", "wijziging-h2"), besluitdatum="2026-09-22",
+                 definitief=[{"id": "wsb-2026-90020", "soort": "besluit", "titel": "b"}])
+        b["zichtbaar_in_dso"]["besluit"] = "2026-09-29"
+        a = archief.Archief(config([b]), self.uit, client=None)
+        a.voorbereiden()
+        nu = a.config.besluiten[0].map
+        self.assertEqual(nu, "20260922_wijziging-h2_wsb-2026-90020")
+        self.assertTrue(os.path.exists(os.path.join(self.uit, nu, "Ontwerp_20260605", "wsb-2026-90010_ontwerp.pdf")))
+        self.assertFalse(os.path.exists(os.path.join(self.uit, vroeger.map)))
+        self.assertIn(nu, a.gewijzigd)
+        # The folder of another besluit is never taken, even when the id fits.
+        self.assertTrue(os.path.exists(self.m("Ontwerp_20250514")))
+
+
+class WijzigingenAanvullen(unittest.TestCase):
+    """A complete besluit only gets new <date>_gewijzigd folders; what is there stays."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.uit = tmp.name
         self.c = config([besluit("2023-12-20", "2024-01-01", ["2024-01-15"], "wsb-1"),
                          besluit("2024-12-17", "2025-01-01", ["2025-01-20"], "wsb-2")])
         self.b1, self.b2 = (b.map for b in self.c.besluiten)
-        self.refs = {"ref-a": {"activiteit": "nl.x.activiteit.A", "label": "Conclusie", "versies": [
+        client = SimpleNamespace(base_url="fake", download_sttr=lambda i: f"<dmn id='{i}'/>".encode())
+        self.a = archief.Archief(self.c, self.uit, client)
+        self.refs = Verdeel.refs()
+        self.a.historie = lambda tot: SimpleNamespace(data={"refs": self.refs}, omschrijving=lambda x: x)
+        for besluitmap, dag, ids in ((self.b1, "20240115", ["2", "9"]), (self.b2, "20250120", ["4"])):
+            maak_bestand(os.path.join(self.uit, besluitmap, "RTR", f"{dag}_volledig", "STTR", "manifest.json"),
+                         json.dumps({"sttrs": [{"sttrId": i} for i in ids]}).encode())
+        # From an earlier run: one folder in each besluit that is no longer planned.
+        self.oud = {b: os.path.join(self.uit, b, "RTR", dag, "STTR", "manifest.json")
+                    for b, dag in ((self.b1, "20240201_gewijzigd"), (self.b2, "20250105_gewijzigd"))}
+        for pad in self.oud.values():
+            maak_bestand(pad, b'{"sttrs": [{"sttrId": "5"}]}')
+
+    def mappen(self, besluitmap):
+        return sorted(os.listdir(os.path.join(self.uit, besluitmap, "RTR")))
+
+    def test_compleet_alleen_aanvullen(self):
+        self.a.af = {self.b2}
+        self.refs["ref-a"]["versies"][-1]["einddatum"] = "28-02-2025"
+        self.refs["ref-a"]["versies"].append(versie("6", "01-03-2025"))  # later, open period of b2
+        self.a.wijzigingen(date(2026, 11, 17))
+        # Incomplete b1: the step owns its folders, so the stale one went.
+        self.assertEqual(self.mappen(self.b1), ["20240101_gewijzigd", "20240115_volledig",
+                                                "20240322_gewijzigd", "20240701_gewijzigd"])
+        # Complete b2: the stale folder stays as it was, the new one is added.
+        self.assertEqual(self.mappen(self.b2), ["20250105_gewijzigd", "20250120_volledig", "20250301_gewijzigd"])
+        with open(self.oud[self.b2], "rb") as f:
+            self.assertEqual(f.read(), b'{"sttrs": [{"sttrId": "5"}]}')
+        self.assertEqual(self.a.gewijzigd, {self.b1, self.b2})
+        # The same history again changes nothing.
+        self.a.gewijzigd = set()
+        self.a.wijzigingen(date(2026, 11, 17))
+        self.assertEqual(self.a.gewijzigd, set())
+
+    def test_bestaande_map_van_compleet_besluit_blijft(self):
+        self.a.af = {self.b2}
+        bestaand = os.path.join(self.uit, self.b2, "RTR", "20250301_gewijzigd", "STTR", "manifest.json")
+        maak_bestand(bestaand, b'{"sttrs": []}')
+        self.refs["ref-a"]["versies"][-1]["einddatum"] = "28-02-2025"
+        self.refs["ref-a"]["versies"].append(versie("6", "01-03-2025"))
+        with self.assertLogs("rtr.archief", "WARNING") as logboek:
+            self.a.wijzigingen(date(2026, 11, 17))
+        self.assertIn("niet toegevoegd: 6", logboek.output[0])
+        with open(bestaand, "rb") as f:
+            self.assertEqual(f.read(), b'{"sttrs": []}')
+
+
+class Verdeel(unittest.TestCase):
+    """Every version is filed exactly under the besluit it took effect in."""
+
+    @staticmethod
+    def refs():
+        return {"ref-a": {"activiteit": "nl.x.activiteit.A", "label": "Conclusie", "versies": [
             versie("1", "01-01-2024", "04-01-2024"),   # first upload, gone before 15-01
             versie("2", "05-01-2024", "21-03-2024"),   # in the 15-01 snapshot
             versie("3", "22-03-2024", "02-01-2025"),   # later modification
@@ -273,6 +452,12 @@ class Verdeel(unittest.TestCase):
         ]}, "ref-b": {"activiteit": "nl.x.activiteit.B", "label": "Melding", "versies": [
             versie("9", "05-01-2024", "30-06-2024"),   # in snapshot, then the object went
         ]}}
+
+    def setUp(self):
+        self.c = config([besluit("2023-12-20", "2024-01-01", ["2024-01-15"], "wsb-1"),
+                         besluit("2024-12-17", "2025-01-01", ["2025-01-20"], "wsb-2")])
+        self.b1, self.b2 = (b.map for b in self.c.besluiten)
+        self.refs = self.refs()
         self.snap = {self.b1: {"2", "9"}, self.b2: {"4"}}
 
     def test_alles_ergens(self):
@@ -560,6 +745,74 @@ class AlleenInhoud(unittest.TestCase):
                 self.assertIn("!\t\tDefinitief_20231220/wsb-2023-90001_besluit.pdf: niet gedownload", f.read())
 
 
+class IndexAanvullen(unittest.TestCase):
+    """index writes README.txt, README.md and index.csv only when something changed."""
+
+    def setUp(self):
+        uit, werk = tempfile.TemporaryDirectory(), tempfile.TemporaryDirectory()
+        self.addCleanup(uit.cleanup)
+        self.addCleanup(werk.cleanup)
+        self.uit, self.werk = uit.name, werk.name
+        self.c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")])
+        self.c.pad = os.path.join(self.werk, "archief_CVDR1.json")
+        self.b = self.c.besluiten[0]
+        self.a = archief.Archief(self.c, self.uit, SimpleNamespace(base_url="fake"), werkmap=self.werk)
+        self.a.index()  # the first time: everything is written
+        self.readme = self.a.map(self.b, "README.txt")
+
+    def lees(self, pad):
+        with open(pad, "rb") as f:
+            return f.read()
+
+    def schrijf(self, pad, inhoud):
+        with open(pad, "wb") as f:
+            f.write(inhoud)
+
+    def test_niets_gewijzigd_niets_geschreven(self):
+        self.a.af, self.a.gewijzigd = {self.b.map}, set()
+        for naam in ("README.md", "index.csv"):
+            self.schrijf(os.path.join(self.uit, naam), b"van een eerdere run")
+        self.schrijf(self.readme, b"van een eerdere run\r\n!\t\tMatch.kb\r\n")
+        self.a.index()
+        for naam in ("README.md", "index.csv"):
+            self.assertEqual(self.lees(os.path.join(self.uit, naam)), b"van een eerdere run")
+        self.assertEqual(self.lees(self.readme), b"van een eerdere run\r\n!\t\tMatch.kb\r\n")
+        self.assertFalse(os.path.exists(os.path.join(self.werk, "vorige-readme")))
+
+    def test_handmatig_blijft_en_vorige_wordt_bewaard(self):
+        handmatig = b"Handmatig\r\n\t\tMatch.kb\r\n!\t\taanleverpakket.zip nog toevoegen\r\n"
+        oud = self.lees(self.readme) + b"\r\n" + handmatig
+        self.schrijf(self.readme, oud)
+        self.a.af, self.a.gewijzigd = {self.b.map}, {self.b.map}  # its folder got something new
+        self.schrijf(os.path.join(self.uit, "README.md"), b"oud")
+        self.a.index()
+        nieuw = self.lees(self.readme)
+        self.assertTrue(nieuw.endswith(b"\r\n\r\n" + handmatig), nieuw[-200:])
+        self.assertEqual(nieuw.count(b"Handmatig"), 1)
+        # The '!' lines written by hand count too: besluit, RTR/ and aanleverpakket.
+        self.assertIn(b"Nakijken: 3 regel(s).", nieuw)
+        self.assertIn(b"In werking 01-01-2024\r\n", nieuw)  # no toestand known yet
+        vorige = os.listdir(os.path.join(self.werk, "vorige-readme"))
+        self.assertEqual(len(vorige), 1)
+        self.assertTrue(vorige[0].startswith(self.b.map + "_"))
+        self.assertEqual(self.lees(os.path.join(self.werk, "vorige-readme", vorige[0])), oud)
+        self.assertNotEqual(self.lees(os.path.join(self.uit, "README.md")), b"oud")
+        # Written again, the README.txt stays the same.
+        self.a.gewijzigd = {self.b.map}
+        self.a.index()
+        self.assertEqual(self.lees(self.readme), nieuw)
+
+    def test_onvolledig_alleen_als_er_iets_anders_staat(self):
+        self.a.af, self.a.gewijzigd = set(), set()
+        anders = self.lees(self.readme).replace(f"{date.today():%d-%m-%Y}".encode(), b"01-01-2026")
+        self.schrijf(self.readme, anders)
+        self.a.index()  # only the day differs: left alone
+        self.assertEqual(self.lees(self.readme), anders)
+        maak_bestand(self.a.map(self.b, "Definitief_20231220", "wsb-2023-90001_besluit.pdf"))
+        self.a.index()  # now the besluit is there: README.txt says so
+        self.assertIn(b"\t\tDefinitief_20231220/wsb-2023-90001_besluit.pdf", self.lees(self.readme))
+
+
 class ReadmeTxt(unittest.TestCase):
     def maak(self, besluiten, bestanden):
         tmp = tempfile.TemporaryDirectory()
@@ -619,6 +872,24 @@ class ReadmeTxt(unittest.TestCase):
         a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
         self.assertIn("\tinspraakrapport\n\t\tDefinitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
+
+    def test_alleen_ontwerp(self):
+        a, c = self.maak([alleen_ontwerp("2026-06-05", "wsb-2026-90010")], [])
+        a._readme_txt(c.besluiten[0], {}, [])
+        t = self.tekst(a, c.besluiten[0])
+        self.assertIn("Ontwerp van 05-06-2026, bekendmaking wsb-2026-90010; nog geen besluit\n", t)
+        self.assertNotIn("In werking", t)
+        self.assertEqual([r for r in t.split("\n") if r.startswith("!")],
+                         ["!\t\tOntwerp_20260605/wsb-2026-90010_ontwerp.pdf: niet gedownload (Ontwerp)"])
+
+    def test_besluit_nog_niet_in_werking(self):
+        b = besluit("2026-09-22", "2026-10-07", [], "wsb-2026-90020")
+        del b["in_werking"]
+        a, c = self.maak([b], ["Definitief_20260922/wsb-2026-90020_besluit.pdf"])
+        a._readme_txt(c.besluiten[0], {}, [])
+        t = self.tekst(a, c.besluiten[0])
+        self.assertIn("In werking: nog niet bekend\n", t)
+        self.assertNotIn("!", t.split("Toelichting")[0].replace("Een '!'", ""))
 
     def test_blad_van_de_publicatie(self):
         for voorvoegsel, naam in (("wsb", "Waterschapsblad"), ("prb", "Provinciaal blad"),

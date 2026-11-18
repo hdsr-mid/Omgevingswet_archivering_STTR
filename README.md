@@ -95,8 +95,10 @@ Alles komt in `log/`, met de peildatum, de naam van het bestuursorgaan en de omg
 
 ```bash
 pip install -r requirements-archief.txt
-python code/archief.py data/archief_CVDR707248.json --rate 4
+python code/archief.py --rate 4
 ```
+
+Zonder JSON-bestand gebruikt de tool `data/archief_CVDR707248.json`; voor een andere regeling geef je het pad mee (`python code/archief.py data/archief_CVDR….json`).
 
 Per definitief besluit één map, genoemd naar de besluitdatum:
 
@@ -129,6 +131,9 @@ archief/
 - **Hele regeling:** de wijzigingsbesluiten bevatten alleen de wijzigingen. De hele regeling wordt per toestand afgedrukt van [lokaleregelgeving.overheid.nl](https://lokaleregelgeving.overheid.nl/CVDR707248), met de afdrukopmaak van die site, in A4 en met bron en afdrukdatum in de voettekst. Dat gebeurt met Playwright: op Windows met de geïnstalleerde Edge, elders met Chrome of met `python -m playwright install chromium-headless-shell`, of met `--browser <pad>`.
 - **Statusoverzicht:** in het archief toont `status.xlsx` per soort de datum waarop de versie inging (`Geldig vanaf …`). De laatste wijzigingsdatum van een versie overschrijft de RTR zodra die versie vervangen wordt, dus voor een peildatum in het verleden zegt die niets.
 - **Stappen:** `--stappen publicaties,bijlagen,regeling,rtr,wijzigingen,index` (standaard alle). Wat er al is, wordt overgeslagen; een nieuw besluit toevoegen aan het JSON-bestand en opnieuw draaien vult het archief aan.
+- **Aanvullen:** elke run vult aan. Een besluit is compleet als het in werking is en alles er is: elke publicatie als PDF, `bijlagen.json` met elke kaart en bijlage, elke toestand van de regeling en een volledige vastlegging op elke peildatum. Een compleet besluit wordt niet opnieuw opgehaald. Wijzigingen in de toepasbare regels horen bij het besluit dat op die dag gold, tot het volgende besluit in werking treedt; ook een compleet besluit krijgt daarvoor nieuwe mappen `<datum>_gewijzigd`, maar wat er al in staat, blijft zoals het is.
+- **Alleen een ontwerp:** een besluit mag alleen een ontwerp hebben (nog geen `besluitdatum`, `definitief` of `in_werking`). De map heet dan naar de dag waarop het ontwerp zichtbaar werd en de id van het ontwerp, en krijgt de naam van het besluit zodra dat in het JSON-bestand staat. Zonder `in_werking` (de toestand staat nog niet in CVDR) zijn er nog geen toepasbare regels voor het besluit.
+- **Eigen regels in README.txt:** `README.txt`, `README.md` en `index.csv` worden alleen opnieuw geschreven als er iets veranderde. Zet eigen regels (zoals een Match-bestand of aanleverpakket) onderaan `README.txt`, onder een regel die begint met `Handmatig`: die blijven staan. Een `README.txt` die vervangen wordt, staat eerst nog in `log/vorige-readme/`.
 
 ### Exitcodes
 
