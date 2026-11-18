@@ -90,7 +90,7 @@ Alles komt in `log/`, met de peildatum, de naam van het bestuursorgaan en de omg
 
 ## Archief per besluit
 
-`code/archief.py` legt een regeling per definitief besluit vast: de publicaties, de hele regeling en élke versie van de toepasbare regels die eronder viel. Welke besluiten, publicaties en peildata dat zijn, staat in een JSON-bestand; voor de Waterschapsverordening van HDSR is dat [data/archief_CVDR707248.json](data/archief_CVDR707248.json).
+`code/archief.py` legt een regeling per definitief besluit vast: de publicaties met hun kaarten en bijlagen, de hele regeling en élke versie van de toepasbare regels die eronder viel. Welke besluiten, publicaties en peildata dat zijn, staat in een JSON-bestand; voor de Waterschapsverordening van HDSR is dat [data/archief_CVDR707248.json](data/archief_CVDR707248.json).
 
 ```bash
 pip install -r requirements-archief.txt
@@ -103,10 +103,14 @@ Per definitief besluit één map, genoemd naar de besluitdatum:
 archief/
 ├── README.md, index.csv (elk bestand met SHA-256), versiehistorie.json
 └── 20250715_wijzigingsbesluit-h2-3-4_wsb-2025-17997/
-    ├── LEESMIJ.md
+    ├── README.txt    wat erin zit, en met een ! vooraan wat erbij hoort maar ontbreekt
+    ├── bijlagen.json herkomst en SHA-256 van elke kaart en bijlage
     ├── Ontwerp/      ontwerpbesluit en kennisgevingen (PDF uit het Waterschapsblad)
-    ├── Definitief/   het besluit (PDF uit het Waterschapsblad) en de hele regeling
-    │                 zoals die vanaf de inwerkingtreding gold (PDF)
+    │   └── bijlagen/ informatieobjecten (PDF) en externe bijlagen
+    ├── Definitief/   het besluit (PDF uit het Waterschapsblad), zijn bijlagen/
+    │                 (zoals een inspraakrapport), en de hele regeling zoals die
+    │                 vanaf de inwerkingtreding gold (PDF)
+    ├── kaarten/      de werkingsgebieden (GIO's, GML) die het besluit vaststelt
     └── RTR/
         ├── 20250801_volledig/   alle toepasbare regels die op die dag golden
         ├── 20250808_volledig/   (status.xlsx, werkingsgebieden.txt, STTR/)
@@ -115,9 +119,11 @@ archief/
 
 - **Volledig:** elke STTR-versie hoort bij het besluit in wiens periode (inwerkingtreding tot de volgende) hij inging. Staat hij in een volledige vastlegging van dat besluit, dan is hij daar gearchiveerd; anders krijgt hij een map `<datum>_gewijzigd` voor de dag waarop hij inging. Dat geldt voor latere wijzigingen en voor eerste uploads die binnen enkele dagen weer vervangen werden. `STTR/manifest.json` noemt per bestand welke versie het vervangt en waardoor het vervangen werd; vervallen regelbeheerobjecten staan erin zonder bestand. Het `README.md` van het archief controleert dat alle versies uit `versiehistorie.json` erin staan.
 - **Versiegeschiedenis:** de RTR geeft per regelbeheerobject alleen de versie op een datum. De tool loopt de activiteitenboom maandelijks en op elke peildatum af en volgt per regelbeheerobject de keten van versies (`code/versiehistorie.py`).
+- **Kaarten en bijlagen:** de metadata van elke publicatie noemt wat ze vaststelt (`steltVast`: werkingsgebieden als GIO en PDF-informatieobjecten zoals een inspraakrapport) en welke externe bijlagen ze meestuurt. De stap `bijlagen` haalt ze op: de GML is de authentieke versie van officielebekendmakingen.nl en moet zelf de gevraagde versie noemen. Kaarten staan in `kaarten/` naast `RTR/`, alleen in de versie van het besluit; een kaart van het ontwerp die het besluit niet vaststelt (niet onder dezelfde identificatie en niet onder dezelfde titel), heet `ONTWERP_…`. Een bijlage die gelijk is aan een eerdere in dezelfde map (een kennisgeving die twee keer is gepubliceerd) staat er één keer; `bijlagen.json` noemt hem dan `identiek_aan`.
+- **README.txt:** per besluit wat er in de map zit, per onderdeel (ontwerp, kennisgeving, renvooi, Match, kaarten, inspraakrapport, besluit, hele regeling, RTR) en met een `!` vooraan wat erbij hoort maar niet in de map zit: interne bestanden (`.kb`, `.zip`, renvooi, mutatieoverzicht, Word-kennisgeving) en DM-nummers. Wat niet gepubliceerd is (een inspraakrapport, kaarten bij een besluit dat geen werkingsgebieden wijzigt), wordt niet genoemd. Wie zo'n bestand in de map zet, ziet het bij de volgende run zonder `!`. In het JSON-bestand kan per besluit `intern` de verwachte bestandsnamen geven en `dm` de DM-nummers (`regeling.dm` geldt voor elk besluit); `opmerking` bij een publicatie komt in de README.txt.
 - **Hele regeling:** de wijzigingsbesluiten bevatten alleen de wijzigingen. De hele regeling wordt per toestand afgedrukt van [lokaleregelgeving.overheid.nl](https://lokaleregelgeving.overheid.nl/CVDR707248), met de afdrukopmaak van die site, in A4 en met bron en afdrukdatum in de voettekst. Dat gebeurt met Playwright: op Windows met de geïnstalleerde Edge, elders met Chrome of met `python -m playwright install chromium-headless-shell`, of met `--browser <pad>`.
 - **Statusoverzicht:** in het archief toont `status.xlsx` per soort de datum waarop de versie inging (`Geldig vanaf …`). De laatste wijzigingsdatum van een versie overschrijft de RTR zodra die versie vervangen wordt, dus voor een peildatum in het verleden zegt die niets.
-- **Stappen:** `--stappen publicaties,regeling,rtr,wijzigingen,index` (standaard alle). Wat er al is, wordt overgeslagen; een nieuw besluit toevoegen aan het JSON-bestand en opnieuw draaien vult het archief aan.
+- **Stappen:** `--stappen publicaties,bijlagen,regeling,rtr,wijzigingen,index` (standaard alle). Wat er al is, wordt overgeslagen; een nieuw besluit toevoegen aan het JSON-bestand en opnieuw draaien vult het archief aan.
 
 ## Tests
 

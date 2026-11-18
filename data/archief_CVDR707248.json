@@ -17,9 +17,12 @@
       "in_werking": "2024-01-01",
       "ontwerp": [
         {"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "ONTWERP Waterschapsverordening"},
-        {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening"},
-        {"id": "wsb-2023-10713", "soort": "kennisgeving", "titel": "Start inspraak Ontwerp Waterschapsverordening"},
-        {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening"}
+        {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening",
+         "opmerking": "Kennisgeving met als externe bijlagen het ontwerp, de Onderhoudsverordening en de drie leggers."},
+        {"id": "wsb-2023-10713", "soort": "kennisgeving", "titel": "Start inspraak Ontwerp Waterschapsverordening",
+         "opmerking": "Dezelfde kennisgeving, via de LVBB bij het ontwerp (wsb-2023-10605)."},
+        {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-Waterschapsverordening",
+         "opmerking": "Opnieuw gepubliceerd: dezelfde tekst en dezelfde externe bijlagen als wsb-2023-10592."}
       ],
       "definitief": [
         {"id": "wsb-2023-15782", "soort": "besluit", "titel": "Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"},
@@ -44,7 +47,8 @@
         {"id": "wsb-2024-27541", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024"}
       ],
       "toestanden": [{"nummer": 3, "geldig_vanaf": "2025-01-01"}],
-      "rtr_peildata": ["2025-01-20"]
+      "rtr_peildata": ["2025-01-20"],
+      "dm": [{"omschrijving": "Bestuursstukken ontwerp-wijzigingsbesluit", "nummer": "1998459", "fase": "ontwerp"}]
     },
     {
       "besluitdatum": "2025-01-30",
@@ -64,7 +68,9 @@
       "in_werking": "2025-07-24",
       "ontwerp": [
         {"id": "wsb-2025-11894", "soort": "ontwerp", "titel": "Ontwerp wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden 2024 (hoofdstukken 2, 3 en 4)"},
-        {"id": "wsb-2025-12517", "soort": "kennisgeving", "titel": "Kennisgeving terinzagelegging Ontwerp wijzigingsbesluit Waterschapsverordening hoofdstukken 2, 3, en 4"}
+        {"id": "wsb-2025-12517", "soort": "kennisgeving", "titel": "Kennisgeving terinzagelegging Ontwerp wijzigingsbesluit Waterschapsverordening hoofdstukken 2, 3, en 4"},
+        {"id": "wsb-2025-12605", "soort": "kennisgeving", "titel": "Start inspraak ontwerp-wijzigingsbesluit beleidsregels bij de Waterschapsverordening, profielenlegger en werkingsgebieden van de Waterschapsverordening",
+         "opmerking": "Kondigt de inspraak aan op de ontwerp-wijziging van de werkingsgebieden (bijlage II van de verordening), samen met de beleidsregels en de profielenlegger; de externe bijlage zijn de beleidsregels, een aparte regeling."}
       ],
       "definitief": [
         {"id": "wsb-2025-17997", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden inhoudende de wijziging van hoofdstuk 2, 3 en 4"}

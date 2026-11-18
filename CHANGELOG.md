@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data/archief_CVDR707248.json`: de besluiten van de Waterschapsverordening HDSR met hun publicaties en peildata
 - Statusoverzicht kan per soort de begindatum van de versie tonen (`Geldig vanaf …`); het archief gebruikt dat
 - STTR-manifest vermeldt einddatum, functioneleStructuurRef en SHA-256
+- Archief: stap `bijlagen` haalt per publicatie de kaarten (GIO's als GML), PDF-informatieobjecten (zoals het inspraakrapport) en externe bijlagen op, met herkomst in `bijlagen.json`; een gelijke bijlage wordt één keer opgeslagen. Kaarten staan in `kaarten/` naast `RTR/`, alleen in de versie van het besluit (`ONTWERP_…` voor een kaart die alleen het ontwerp had)
+- Archief: `README.txt` per besluit vervangt `LEESMIJ.md`; noemt wat erin zit en met een `!` wat erbij hoort maar ontbreekt (interne bestanden, DM-nummers), met `intern`, `dm` en `opmerking` in het JSON-bestand
+- `data/archief_CVDR707248.json`: kennisgeving wsb-2025-12605 (inspraak op de ontwerp-wijziging van de werkingsgebieden) bij het besluit van 15-07-2025 en het DM-nummer van het ontwerp-wijzigingsbesluit 2024
 
 ## [2.0.0] - 2026-11-17
 

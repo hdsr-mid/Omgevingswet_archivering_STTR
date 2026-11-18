@@ -187,5 +187,210 @@ class Keten(unittest.TestCase):
                          [date(2025, 11, 1), date(2025, 12, 1), date(2026, 1, 1), date(2026, 2, 1)])
 
 
+GML = (b'<?xml version="1.0"?><geo:GeoInformatieObjectVaststelling '
+       b'xmlns:geo="https://standaarden.overheid.nl/stop/imop/geo/"><geo:vastgesteldeVersie>'
+       b'<geo:GeoInformatieObjectVersie><geo:FRBRWork>/join/id/regdata/ws0636/2023/WG_O_ARK</geo:FRBRWork>'
+       b'<geo:FRBRExpression>/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004</geo:FRBRExpression>'
+       b'</geo:GeoInformatieObjectVersie></geo:vastgesteldeVersie></geo:GeoInformatieObjectVaststelling>')
+
+
+class Bijlagen(unittest.TestCase):
+    def test_bestandsnaam_van_informatieobject(self):
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004"),
+                         "WG_O_ARK_2024-12-02_1004")
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_08/nld@2023-12-01"),
+                         "WG_08_2023-12-01")
+        self.assertEqual(archief.io_bestandsnaam("/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2023-06-02;ontwerp"),
+                         "WG_O_ARK_2023-06-02_ontwerp")
+
+    def test_metadata_meerdere_waarden_en_genest(self):
+        m = archief.lees_metadata(
+            b'<metadata_gegevens><metadata name="OVERHEIDop.steltVast" content="/join/a"/>'
+            b'<metadata name="OVERHEIDop.steltVast" content="/join/b"/>'
+            b'<metadata name="OVERHEIDop.gebiedsmarkering" content="Waterschap">'
+            b'<metadata name="OVERHEIDop.waterschapsnaam" content="HDSR"/></metadata>'
+            b'<metadata name="OVERHEIDop.externeBijlage" content="Legger|exb-2023-1"/></metadata_gegevens>')
+        self.assertEqual(m["OVERHEIDop.steltVast"], ["/join/a", "/join/b"])
+        self.assertEqual(m["OVERHEIDop.waterschapsnaam"], ["HDSR"])
+        self.assertEqual(m["OVERHEIDop.externeBijlage"], ["Legger|exb-2023-1"])
+
+    def test_gml_noemt_zijn_versie(self):
+        self.assertEqual(archief.frbr_expressie(GML),
+                         "/join/id/regdata/ws0636/2023/WG_O_ARK/nld@2024-12-02;1004")
+
+
+def gml(join):
+    return (b'<?xml version="1.0"?><geo:GeoInformatieObjectVaststelling '
+            b'xmlns:geo="https://standaarden.overheid.nl/stop/imop/geo/"><geo:vastgesteldeVersie>'
+            b'<geo:GeoInformatieObjectVersie><geo:FRBRExpression>' + join.encode() +
+            b'</geo:FRBRExpression></geo:GeoInformatieObjectVersie></geo:vastgesteldeVersie>'
+            b'</geo:GeoInformatieObjectVaststelling>')
+
+
+WG = "/join/id/regdata/ws0636/2023/"
+TITELS = {"WG_O_ARK": "Oost", "WG_GA": "Groot afvoerdebiet", "WG_Grote_Afvoer": "Groot afvoerdebiet",
+          "WG_Alleen_Ontwerp": "Vervallen gebied"}
+
+
+class BijlagenOpslaan(unittest.TestCase):
+    """The bijlagen step, with the network replaced."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "o"},
+                        {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "k1"},
+                        {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "k2"}]
+        self.c = config([b])
+        self.a = archief.Archief(self.c, self.tmp.name, client=None)
+        self.besluitmap = os.path.join(self.tmp.name, self.c.besluiten[0].map)
+        self.metadata = {
+            "wsb-2023-10605": {"OVERHEIDop.steltVast": [
+                WG + "WG_O_ARK/nld@2023-06-02;ontwerp",          # same GIO in the besluit
+                WG + "WG_Grote_Afvoer/nld@2023-06-02;ontwerp",   # renamed WG_GA, same title
+                WG + "WG_Alleen_Ontwerp/nld@2023-06-02;ontwerp"]},  # not in the besluit
+            "wsb-2023-10592": {"OVERHEIDop.externeBijlage": ["Legger|exb-1"]},
+            "wsb-2023-11096": {"OVERHEIDop.externeBijlage": ["Legger|exb-2"]},
+            "wsb-2023-15782": {"OVERHEIDop.steltVast": [WG + "WG_O_ARK/nld@2023-12-01",
+                                                        WG + "WG_GA/nld@2023-12-01"],
+                               "DCTERMS.available": ["2023-12-21"]}}
+        self.verzoeken = []
+        originelen = (archief.publicatie_metadata, archief.informatieobject, archief.haal_met_url)
+
+        def herstel():
+            archief.publicatie_metadata, archief.informatieobject, archief.haal_met_url = originelen
+        self.addCleanup(herstel)
+        archief.publicatie_metadata = lambda pub: self.metadata[pub]
+
+        def informatieobject(join):
+            self.verzoeken.append(join)
+            return {"soort": "kaart", "id": join, "dc": "dc-1", "titel": TITELS[join.split("/")[-2]],
+                    "url": "https://r" + join + ".gml", "bron": "https://z/dc-1"}
+
+        def haal_met_url(url, **_):
+            self.verzoeken.append(url)
+            if url.endswith(".gml"):
+                return gml(url[len("https://r"):-len(".gml")]), url
+            return b"%PDF-1.4 dezelfde legger", url.replace("currentItem", "1/bijlage/x.pdf")
+        archief.informatieobject, archief.haal_met_url = informatieobject, haal_met_url
+
+    def lees(self):
+        with open(os.path.join(self.besluitmap, "bijlagen.json"), encoding="utf-8") as f:
+            return json.load(f)["publicaties"]
+
+    def test_kaarten_alleen_in_versie_van_besluit(self):
+        self.a.bijlagen()
+        self.assertEqual(sorted(os.listdir(os.path.join(self.besluitmap, "kaarten"))),
+                         ["ONTWERP_WG_Alleen_Ontwerp_2023-06-02_ontwerp.gml",
+                          "WG_GA_2023-12-01.gml", "WG_O_ARK_2023-12-01.gml"])
+        ontwerp = {x["id"].split("/")[-2]: x for x in self.lees()["wsb-2023-10605"]["bijlagen"]}
+        self.assertEqual(ontwerp["WG_O_ARK"]["vastgesteld_als"], WG + "WG_O_ARK/nld@2023-12-01")
+        self.assertEqual(ontwerp["WG_Grote_Afvoer"]["vastgesteld_als"], WG + "WG_GA/nld@2023-12-01")
+        self.assertIsNone(ontwerp["WG_O_ARK"]["bestand"])
+        # what the besluit sets is not downloaded for the ontwerp
+        self.assertNotIn("https://r" + WG + "WG_O_ARK/nld@2023-06-02;ontwerp.gml", self.verzoeken)
+        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Ontwerp", "kaarten")))
+
+    def test_gelijke_bijlage_een_keer_opgeslagen(self):
+        self.a.bijlagen()
+        p = self.lees()
+        eerste, tweede = p["wsb-2023-10592"]["bijlagen"][0], p["wsb-2023-11096"]["bijlagen"][0]
+        self.assertEqual(eerste["bestand"], "Ontwerp/bijlagen/exb-1_Legger.pdf")
+        self.assertEqual(tweede["identiek_aan"], "Ontwerp/bijlagen/exb-1_Legger.pdf")
+        self.assertEqual(os.listdir(os.path.join(self.besluitmap, "Ontwerp", "bijlagen")), ["exb-1_Legger.pdf"])
+        self.assertEqual(p["wsb-2023-15782"]["gepubliceerd"], "2023-12-21")
+
+    def test_tweede_run_haalt_niets_opnieuw(self):
+        self.a.bijlagen()
+        self.verzoeken.clear()
+        self.a.bijlagen()
+        self.assertEqual(self.verzoeken, [])
+
+    def test_kaart_van_eerdere_indeling_wordt_verplaatst(self):
+        self.a.bijlagen()
+        # As an earlier version kept it: under Definitief/kaarten, and bijlagen.json saying so.
+        oud = os.path.join(self.besluitmap, "Definitief", "kaarten", "WG_O_ARK_2023-12-01.gml")
+        os.makedirs(os.path.dirname(oud))
+        os.replace(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml"), oud)
+        pad = os.path.join(self.besluitmap, "bijlagen.json")
+        with open(pad, encoding="utf-8") as f:
+            data = json.load(f)
+        for x in data["publicaties"]["wsb-2023-15782"]["bijlagen"]:
+            if x["id"].endswith("WG_O_ARK/nld@2023-12-01"):
+                x["bestand"] = "Definitief/kaarten/WG_O_ARK_2023-12-01.gml"
+        with open(pad, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        self.verzoeken.clear()
+        self.a.bijlagen()
+        self.assertEqual(self.verzoeken, [])
+        self.assertTrue(os.path.exists(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml")))
+        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Definitief", "kaarten")))
+
+    def test_gml_met_andere_versie_wordt_geweigerd(self):
+        archief.haal_met_url = lambda url, **_: (gml(WG + "WG_O_ARK/nld@2025-01-01;9"), url)
+        with self.assertRaisesRegex(RuntimeError, "niet /join"):
+            self.a.bijlagen()
+
+
+class ReadmeTxt(unittest.TestCase):
+    def maak(self, besluiten, bestanden):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        c = config(besluiten)
+        a = archief.Archief(c, tmp.name, client=None)
+        for b in c.besluiten:
+            for rel in bestanden:
+                pad = os.path.join(tmp.name, b.map, *rel.split("/"))
+                os.makedirs(os.path.dirname(pad), exist_ok=True)
+                open(pad, "wb").close()
+        return a, c
+
+    def tekst(self, a, b):
+        with open(a.map(b, "README.txt"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_wijziging_met_intern_bestand_en_dm(self):
+        b = besluit("2024-12-17", "2025-01-01", [], "wsb-2024-27541")
+        b["ontwerp"] = [{"id": "wsb-2024-22028", "soort": "ontwerp", "titel": "Ontwerp"},
+                        {"id": "wsb-2024-22126", "soort": "kennisgeving", "titel": "Kennisgeving"}]
+        b["toestanden"] = [{"nummer": 3, "geldig_vanaf": "2025-01-01"}]
+        b["intern"] = {"ontwerp.kb": "Ontwerp_v1.kb"}
+        b["dm"] = [{"omschrijving": "Bestuursstukken ontwerp", "nummer": "1998459", "fase": "ontwerp"}]
+        a, c = self.maak([b], ["Ontwerp/wsb-2024-22028_ontwerp.pdf", "Ontwerp/wsb-2024-22126_kennisgeving.pdf",
+                               "Ontwerp/Ontwerp_v1.zip", "Definitief/wsb-2024-27541_besluit.pdf",
+                               "Definitief/regeling_toestand-3_geldend-vanaf-20250101.pdf", "LEESMIJ.md",
+                               "losse_notitie.txt"])
+        uitroep = a._readme_txt(c.besluiten[0], {}, [])
+        t = self.tekst(a, c.besluiten[0])
+        regels = t.split("\n")
+        self.assertIn("!\t\tOntwerp_v1.kb  (Match-bestand (.kb))", regels)
+        self.assertIn("\t\tOntwerp/Ontwerp_v1.zip", regels)            # put in by hand: found
+        self.assertIn("!\t\trenvooi (.pdf)", regels)                     # a wijziging expects one
+        self.assertIn("\tBestuursstukken ontwerp: DM 1998459", regels)
+        self.assertIn("!\tBestuursstukken besluit: DM-nummer", regels)
+        self.assertIn("\t\tLink: https://zoek.officielebekendmakingen.nl/wsb-2024-22028.html", regels)
+        self.assertIn("\t\tlosse_notitie.txt", regels)                   # under overige bestanden
+        self.assertEqual(uitroep, sum(1 for r in regels if r.startswith("!")))
+        self.assertIn(f"Nakijken: {uitroep} regel(s).", t)
+        self.assertFalse(os.path.exists(a.map(c.besluiten[0], "LEESMIJ.md")))
+        # Not published, so not mentioned: no inspraakrapport, no kaarten.
+        self.assertNotIn("inspraakrapport", t)
+        self.assertNotIn("kaarten", t)
+        with open(a.map(c.besluiten[0], "README.txt"), "rb") as f:
+            self.assertIn(b"\r\n", f.read())
+
+    def test_nieuwe_regeling_verwacht_geen_renvooi_of_mutaties(self):
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "Ontwerp"}]
+        b["toestanden"] = [{"nummer": 1, "geldig_vanaf": "2024-01-01"}]
+        a, c = self.maak([b], ["Definitief/bijlagen/Inspraakrapport_2026-05-11_1.pdf"])
+        a._readme_txt(c.besluiten[0], {}, [])
+        t = self.tekst(a, c.besluiten[0])
+        self.assertNotIn("renvooi", t)
+        self.assertNotIn("mutaties", t)
+        self.assertIn("\tinspraakrapport\n\t\tDefinitief/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
+
+
 if __name__ == "__main__":
     unittest.main()
