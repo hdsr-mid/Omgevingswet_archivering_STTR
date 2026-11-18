@@ -938,6 +938,7 @@ class Archief:
             "Uit de RTR verdwenen: de RTR haalt activiteiten en regelbeheerobjecten uit de boom zonder "
             "hun STTR-versies te beëindigen. Hun bestanden staan in dit archief; de lijst zegt wanneer "
             "ze verdwenen (tussen twee rondes door de boom).")]
+        os.makedirs(self.map(b), exist_ok=True)  # a besluit nothing was fetched for yet
         with open(self.map(b, "README.txt"), "w", encoding="utf-8", newline="\r\n") as f:
             f.write("\n".join(regels))
         leesmij = self.map(b, "LEESMIJ.md")

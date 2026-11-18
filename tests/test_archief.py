@@ -550,6 +550,15 @@ class AlleenInhoud(unittest.TestCase):
                 self.assertNotIn("versiehistorie", f.read())
             self.assertEqual(a.historiepad, os.path.join(werk, "archief_CVDR1_versiehistorie.json"))
 
+    def test_index_op_leeg_archief(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as uit:
+            c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")])
+            a = archief.Archief(c, uit, SimpleNamespace(base_url="fake"))
+            a.index()
+            with open(a.map(c.besluiten[0], "README.txt"), encoding="utf-8") as f:
+                self.assertIn("!\t\tDefinitief_20231220/wsb-2023-90001_besluit.pdf: niet gedownload", f.read())
+
 
 class ReadmeTxt(unittest.TestCase):
     def maak(self, besluiten, bestanden):
