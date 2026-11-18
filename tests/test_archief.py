@@ -34,7 +34,7 @@ def config(besluiten):
 def besluit(besluitdatum, in_werking, peildata, bekendmaking):
     return {"besluitdatum": besluitdatum, "naam": "besluit", "in_werking": in_werking,
             "definitief": [{"id": bekendmaking, "soort": "besluit", "titel": "t"}],
-            "rtr_peildata": peildata}
+            "rtr_peildata": peildata, "zichtbaar_in_dso": {"besluit": besluitdatum}}
 
 
 def versie(sttr_id, begin, eind=None):
@@ -52,6 +52,42 @@ class Config(unittest.TestCase):
         self.assertIsNone(c.besluiten[1].tot)
         self.assertEqual(c.besluit_voor(date(2025, 7, 23)).map, "20231220_besluit_wsb-2023-15782")
         self.assertEqual(c.besluit_voor(date(2025, 7, 24)).map, "20250715_besluit_wsb-2025-17997")
+
+    def test_mappen_heten_naar_de_dag_zichtbaar_in_dso(self):
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-1")
+        b["ontwerp"] = [{"id": "wsb-0", "soort": "ontwerp", "titel": "o"}]
+        with self.assertRaisesRegex(ValueError, "zichtbaar_in_dso.ontwerp ontbreekt"):
+            config([b])
+        b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-21"}
+        self.assertEqual([config([b]).besluiten[0].submap(f) for f in ("Ontwerp", "Definitief")],
+                         ["Ontwerp_20230829", "Definitief_20231221"])
+        del b["zichtbaar_in_dso"]["besluit"]
+        with self.assertRaisesRegex(ValueError, "zichtbaar_in_dso.besluit ontbreekt"):
+            config([b])
+
+    def test_oude_mappen_krijgen_hun_datum(self):
+        # Without a date (first layout) or with another one (an earlier choice of date).
+        b = besluit("2023-12-20", "2024-01-01", [], "wsb-1")
+        b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-21"}
+        b["ontwerp"] = [{"id": "wsb-0", "soort": "ontwerp", "titel": "o"}]
+        c = config([b])
+        with tempfile.TemporaryDirectory() as tmp:
+            a = archief.Archief(c, tmp, client=None)
+            os.makedirs(a.map(c.besluiten[0], "Ontwerp_20230829", "bijlagen"))
+            os.makedirs(a.map(c.besluiten[0], "Definitief"))
+            with open(a.map(c.besluiten[0], "bijlagen.json"), "w", encoding="utf-8") as f:
+                json.dump({"publicaties": {"wsb-0": {"bijlagen": [
+                    {"bestand": "Ontwerp_20230829/bijlagen/x.pdf"},
+                    {"bestand": "Ontwerp_20230829/bijlagen/y.pdf",
+                     "identiek_aan": "Ontwerp_20230829/bijlagen/x.pdf"},
+                    {"bestand": None}]}}}, f)
+            a.hernoem_mappen()
+            self.assertEqual(sorted(os.listdir(a.map(c.besluiten[0]))),
+                             ["Definitief_20231221", "Ontwerp_20230829", "bijlagen.json"])
+            with open(a.map(c.besluiten[0], "bijlagen.json"), encoding="utf-8") as f:
+                x = json.load(f)["publicaties"]["wsb-0"]["bijlagen"]
+            self.assertEqual([x[0]["bestand"], x[1]["identiek_aan"], x[2]["bestand"]],
+                             ["Ontwerp_20230829/bijlagen/x.pdf", "Ontwerp_20230829/bijlagen/x.pdf", None])
 
     def test_peildatum_buiten_periode_is_fout(self):
         with self.assertRaisesRegex(ValueError, "buiten de periode"):
@@ -239,6 +275,7 @@ class BijlagenOpslaan(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-21"}
         b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "o"},
                         {"id": "wsb-2023-10592", "soort": "kennisgeving", "titel": "k1"},
                         {"id": "wsb-2023-11096", "soort": "kennisgeving", "titel": "k2"}]
@@ -290,15 +327,15 @@ class BijlagenOpslaan(unittest.TestCase):
         self.assertIsNone(ontwerp["WG_O_ARK"]["bestand"])
         # what the besluit sets is not downloaded for the ontwerp
         self.assertNotIn("https://r" + WG + "WG_O_ARK/nld@2023-06-02;ontwerp.gml", self.verzoeken)
-        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Ontwerp", "kaarten")))
+        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Ontwerp_20230829", "kaarten")))
 
     def test_gelijke_bijlage_een_keer_opgeslagen(self):
         self.a.bijlagen()
         p = self.lees()
         eerste, tweede = p["wsb-2023-10592"]["bijlagen"][0], p["wsb-2023-11096"]["bijlagen"][0]
-        self.assertEqual(eerste["bestand"], "Ontwerp/bijlagen/exb-1_Legger.pdf")
-        self.assertEqual(tweede["identiek_aan"], "Ontwerp/bijlagen/exb-1_Legger.pdf")
-        self.assertEqual(os.listdir(os.path.join(self.besluitmap, "Ontwerp", "bijlagen")), ["exb-1_Legger.pdf"])
+        self.assertEqual(eerste["bestand"], "Ontwerp_20230829/bijlagen/exb-1_Legger.pdf")
+        self.assertEqual(tweede["identiek_aan"], "Ontwerp_20230829/bijlagen/exb-1_Legger.pdf")
+        self.assertEqual(os.listdir(os.path.join(self.besluitmap, "Ontwerp_20230829", "bijlagen")), ["exb-1_Legger.pdf"])
         self.assertEqual(p["wsb-2023-15782"]["gepubliceerd"], "2023-12-21")
 
     def test_tweede_run_haalt_niets_opnieuw(self):
@@ -309,8 +346,8 @@ class BijlagenOpslaan(unittest.TestCase):
 
     def test_kaart_van_eerdere_indeling_wordt_verplaatst(self):
         self.a.bijlagen()
-        # As an earlier version kept it: under Definitief/kaarten, and bijlagen.json saying so.
-        oud = os.path.join(self.besluitmap, "Definitief", "kaarten", "WG_O_ARK_2023-12-01.gml")
+        # As an earlier version kept it: under Definitief_…/kaarten, and bijlagen.json saying so.
+        oud = os.path.join(self.besluitmap, "Definitief_20231221", "kaarten", "WG_O_ARK_2023-12-01.gml")
         os.makedirs(os.path.dirname(oud))
         os.replace(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml"), oud)
         pad = os.path.join(self.besluitmap, "bijlagen.json")
@@ -318,19 +355,37 @@ class BijlagenOpslaan(unittest.TestCase):
             data = json.load(f)
         for x in data["publicaties"]["wsb-2023-15782"]["bijlagen"]:
             if x["id"].endswith("WG_O_ARK/nld@2023-12-01"):
-                x["bestand"] = "Definitief/kaarten/WG_O_ARK_2023-12-01.gml"
+                x["bestand"] = "Definitief_20231221/kaarten/WG_O_ARK_2023-12-01.gml"
         with open(pad, "w", encoding="utf-8") as f:
             json.dump(data, f)
         self.verzoeken.clear()
         self.a.bijlagen()
         self.assertEqual(self.verzoeken, [])
         self.assertTrue(os.path.exists(os.path.join(self.besluitmap, "kaarten", "WG_O_ARK_2023-12-01.gml")))
-        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Definitief", "kaarten")))
+        self.assertFalse(os.path.exists(os.path.join(self.besluitmap, "Definitief_20231221", "kaarten")))
 
     def test_gml_met_andere_versie_wordt_geweigerd(self):
         archief.haal_met_url = lambda url, **_: (gml(WG + "WG_O_ARK/nld@2025-01-01;9"), url)
         with self.assertRaisesRegex(RuntimeError, "niet /join"):
             self.a.bijlagen()
+
+
+class AlleenInhoud(unittest.TestCase):
+    def test_werkbestanden_niet_in_archief(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as uit, tempfile.TemporaryDirectory() as werk:
+            c = config([besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")])
+            c.pad = os.path.join(werk, "archief_CVDR1.json")
+            a = archief.Archief(c, uit, SimpleNamespace(base_url="fake"), werkmap=werk)
+            os.makedirs(a.map(c.besluiten[0]))
+            for naam in ("archief.log", "versiehistorie.json", "archief_CVDR1.json"):
+                open(os.path.join(uit, naam), "w").close()
+            a.index()
+            self.assertEqual(sorted(os.listdir(uit)),
+                             sorted(["README.md", "index.csv", c.besluiten[0].map]))
+            with open(os.path.join(uit, "index.csv"), encoding="utf-8") as f:
+                self.assertNotIn("versiehistorie", f.read())
+            self.assertEqual(a.historiepad, os.path.join(werk, "archief_CVDR1_versiehistorie.json"))
 
 
 class ReadmeTxt(unittest.TestCase):
@@ -352,20 +407,22 @@ class ReadmeTxt(unittest.TestCase):
 
     def test_wijziging_met_intern_bestand_en_dm(self):
         b = besluit("2024-12-17", "2025-01-01", [], "wsb-2024-27541")
+        b["zichtbaar_in_dso"] = {"ontwerp": "2024-10-17", "besluit": "2024-12-20"}
         b["ontwerp"] = [{"id": "wsb-2024-22028", "soort": "ontwerp", "titel": "Ontwerp"},
                         {"id": "wsb-2024-22126", "soort": "kennisgeving", "titel": "Kennisgeving"}]
         b["toestanden"] = [{"nummer": 3, "geldig_vanaf": "2025-01-01"}]
         b["intern"] = {"ontwerp.kb": "Ontwerp_v1.kb"}
         b["dm"] = [{"omschrijving": "Bestuursstukken ontwerp", "nummer": "1998459", "fase": "ontwerp"}]
-        a, c = self.maak([b], ["Ontwerp/wsb-2024-22028_ontwerp.pdf", "Ontwerp/wsb-2024-22126_kennisgeving.pdf",
-                               "Ontwerp/Ontwerp_v1.zip", "Definitief/wsb-2024-27541_besluit.pdf",
-                               "Definitief/regeling_toestand-3_geldend-vanaf-20250101.pdf", "LEESMIJ.md",
+        a, c = self.maak([b], ["Ontwerp_20241017/wsb-2024-22028_ontwerp.pdf",
+                               "Ontwerp_20241017/wsb-2024-22126_kennisgeving.pdf",
+                               "Ontwerp_20241017/Ontwerp_v1.zip", "Definitief_20241220/wsb-2024-27541_besluit.pdf",
+                               "Definitief_20241220/regeling_toestand-3_geldend-vanaf-20250101.pdf", "LEESMIJ.md",
                                "losse_notitie.txt"])
         uitroep = a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
         regels = t.split("\n")
         self.assertIn("!\t\tOntwerp_v1.kb  (Match-bestand (.kb))", regels)
-        self.assertIn("\t\tOntwerp/Ontwerp_v1.zip", regels)            # put in by hand: found
+        self.assertIn("\t\tOntwerp_20241017/Ontwerp_v1.zip", regels)            # put in by hand: found
         self.assertIn("!\t\trenvooi (.pdf)", regels)                     # a wijziging expects one
         self.assertIn("\tBestuursstukken ontwerp: DM 1998459", regels)
         self.assertIn("!\tBestuursstukken besluit: DM-nummer", regels)
@@ -382,14 +439,15 @@ class ReadmeTxt(unittest.TestCase):
 
     def test_nieuwe_regeling_verwacht_geen_renvooi_of_mutaties(self):
         b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-15782")
+        b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-20"}
         b["ontwerp"] = [{"id": "wsb-2023-10605", "soort": "ontwerp", "titel": "Ontwerp"}]
         b["toestanden"] = [{"nummer": 1, "geldig_vanaf": "2024-01-01"}]
-        a, c = self.maak([b], ["Definitief/bijlagen/Inspraakrapport_2026-05-11_1.pdf"])
+        a, c = self.maak([b], ["Definitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf"])
         a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
         self.assertNotIn("renvooi", t)
         self.assertNotIn("mutaties", t)
-        self.assertIn("\tinspraakrapport\n\t\tDefinitief/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
+        self.assertIn("\tinspraakrapport\n\t\tDefinitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
 
 
 if __name__ == "__main__":
