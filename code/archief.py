@@ -6,6 +6,9 @@ regeling, and every version of the toepasbare regels (STTR) under it.
     python code/archief.py data/archief_CVDR707248.json --stappen publicaties,bijlagen,regeling
     python code/archief.py data/archief_CVDR707248.json --stappen rtr,wijzigingen,index
 
+The first step, zoeken (code/zoeken.py), adds the regeling's new publications
+to the JSON file.
+
 One folder per definitief besluit, named after its besluitdatum:
 
     archief/
@@ -66,6 +69,7 @@ from typing import Any
 
 import catalogus
 import vertrouwen
+import zoeken
 from catalogus import Bestuursorgaan
 from rtr import RTR
 from rtr_client import BASE_URLS, RtrClient
@@ -82,7 +86,7 @@ DATACOLLECTIE = "https://repository.officiele-overheidspublicaties.nl/Datacollec
 EXTERNE_BIJLAGE = "https://repository.officiele-overheidspublicaties.nl/externebijlagen/{exb}/currentItem"
 CVDR_TOESTAND = "https://lokaleregelgeving.overheid.nl/{regeling}/{toestand}"
 USER_AGENT = "rtr-archivering/2.0 (python-urllib)"
-STAPPEN = ("publicaties", "bijlagen", "regeling", "rtr", "wijzigingen", "index")
+STAPPEN = ("zoeken", "publicaties", "bijlagen", "regeling", "rtr", "wijzigingen", "index")
 GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
 # The blad a decentralised government publishes in, by the prefix of the publication id.
 BLADEN = {"wsb": "Waterschapsblad", "prb": "Provinciaal blad", "gmb": "Gemeenteblad"}
@@ -1398,9 +1402,35 @@ def main(argv=None) -> int:
         return 3
 
 
+def zoek_nieuw(pad: str, vandaag: date) -> bool:
+    """The step zoeken: new publications of the regeling into the JSON file; True when it was written.
+
+    When the sources cannot be reached, the run goes on with what the file has.
+    """
+    with open(pad, encoding="utf-8") as f:
+        tekst = f.read()
+    ruw = json.loads(tekst)
+    try:
+        veranderd = zoeken.zoek(ruw, vandaag, zoeken.Bron(haal, lees_metadata))
+    except (RuntimeError, OSError, ET.ParseError) as exc:
+        log.warning("Zoeken mislukt (%s); verder met wat in %s staat", exc, pad)
+        return False
+    for regel in veranderd:
+        log.info("Gevonden: %s", regel)
+    nieuw = zoeken.schrijf(ruw)
+    if nieuw == tekst:
+        log.info("Zoeken: niets nieuws")
+        return False
+    schrijf_atomair(pad, nieuw.encode("utf-8"))
+    log.info("%s bijgewerkt", pad)
+    return True
+
+
 def draai(args: argparse.Namespace, stappen: list[str]) -> int:
     """The steps; 1 when the archive misses STTR versions."""
-    config = lees_config(args.config)
+    config = lees_config(args.config)  # an unusable file stops the run before anything is fetched
+    if "zoeken" in stappen and zoek_nieuw(args.config, date.today()):
+        config = lees_config(args.config)
     client = ArchiefClient(BASE_URLS[config.omgeving], rate=args.rate, cache=args.cache)
     archief = Archief(config, args.uit, client, werkmap=args.werkmap)
     archief.voorbereiden()
