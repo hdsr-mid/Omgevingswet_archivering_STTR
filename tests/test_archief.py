@@ -405,31 +405,32 @@ class ReadmeTxt(unittest.TestCase):
         with open(a.map(b, "README.txt"), encoding="utf-8") as f:
             return f.read()
 
-    def test_wijziging_met_intern_bestand_en_dm(self):
+    def test_wijziging(self):
         b = besluit("2024-12-17", "2025-01-01", [], "wsb-2024-90002")
         b["zichtbaar_in_dso"] = {"ontwerp": "2024-10-17", "besluit": "2024-12-20"}
         b["ontwerp"] = [{"id": "wsb-2024-90021", "soort": "ontwerp", "titel": "Ontwerp"},
                         {"id": "wsb-2024-90022", "soort": "kennisgeving", "titel": "Kennisgeving"}]
         b["toestanden"] = [{"nummer": 3, "geldig_vanaf": "2025-01-01"}]
-        b["intern"] = {"ontwerp.kb": "Ontwerp_v1.kb"}
-        b["dm"] = [{"omschrijving": "Bestuursstukken ontwerp", "nummer": "1234567", "fase": "ontwerp"}]
         a, c = self.maak([b], ["Ontwerp_20241017/wsb-2024-90021_ontwerp.pdf",
                                "Ontwerp_20241017/wsb-2024-90022_kennisgeving.pdf",
-                               "Ontwerp_20241017/Ontwerp_v1.zip", "Definitief_20241220/wsb-2024-90002_besluit.pdf",
+                               "Ontwerp_20241017/aanleverpakket.zip", "Definitief_20241220/wsb-2024-90002_besluit.pdf",
                                "Definitief_20241220/regeling_toestand-3_geldend-vanaf-20250101.pdf", "LEESMIJ.md",
                                "losse_notitie.txt"])
         uitroep = a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
         regels = t.split("\n")
-        self.assertIn("!\t\tOntwerp_v1.kb  (Match-bestand (.kb))", regels)
-        self.assertIn("\t\tOntwerp_20241017/Ontwerp_v1.zip", regels)            # put in by hand: found
-        self.assertIn("!\t\trenvooi (.pdf)", regels)                     # a wijziging expects one
-        self.assertIn("\tBestuursstukken ontwerp: DM 1234567", regels)
-        self.assertIn("!\tBestuursstukken besluit: DM-nummer", regels)
         self.assertIn("\t\tLink: https://zoek.officielebekendmakingen.nl/wsb-2024-90021.html", regels)
-        self.assertIn("\t\tlosse_notitie.txt", regels)                   # under overige bestanden
-        self.assertEqual(uitroep, sum(1 for r in regels if r.startswith("!")))
+        # Files put in by hand are listed under overige bestanden.
+        self.assertIn("\t\tOntwerp_20241017/aanleverpakket.zip", regels)
+        self.assertIn("\t\tlosse_notitie.txt", regels)
+        # Only what is really missing gets a '!': here the RTR snapshots.
+        self.assertEqual([r for r in regels if r.startswith("!")], ["!\t\tRTR/: geen toepasbare regels vastgelegd"])
+        self.assertEqual(uitroep, 1)
         self.assertIn(f"Nakijken: {uitroep} regel(s).", t)
+        # No organisation's own files or document numbers are expected.
+        for woord in ("Match", "renvooi", "mutaties", "DM-nummer", "DM "):
+            self.assertNotIn(woord, t)
+        self.assertNotIn("DM", regels)  # the section
         self.assertFalse(os.path.exists(a.map(c.besluiten[0], "LEESMIJ.md")))
         # Not published, so not mentioned: no inspraakrapport, no kaarten.
         self.assertNotIn("inspraakrapport", t)
@@ -437,7 +438,7 @@ class ReadmeTxt(unittest.TestCase):
         with open(a.map(c.besluiten[0], "README.txt"), "rb") as f:
             self.assertIn(b"\r\n", f.read())
 
-    def test_nieuwe_regeling_verwacht_geen_renvooi_of_mutaties(self):
+    def test_inspraakrapport_in_eigen_sectie(self):
         b = besluit("2023-12-20", "2024-01-01", [], "wsb-2023-90001")
         b["zichtbaar_in_dso"] = {"ontwerp": "2023-08-29", "besluit": "2023-12-20"}
         b["ontwerp"] = [{"id": "wsb-2023-90011", "soort": "ontwerp", "titel": "Ontwerp"}]
@@ -445,8 +446,6 @@ class ReadmeTxt(unittest.TestCase):
         a, c = self.maak([b], ["Definitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf"])
         a._readme_txt(c.besluiten[0], {}, [])
         t = self.tekst(a, c.besluiten[0])
-        self.assertNotIn("renvooi", t)
-        self.assertNotIn("mutaties", t)
         self.assertIn("\tinspraakrapport\n\t\tDefinitief_20231220/bijlagen/Inspraakrapport_2026-05-11_1.pdf", t)
 
 

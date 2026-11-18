@@ -77,24 +77,6 @@ USER_AGENT = "rtr-archivering/2.0 (python-urllib)"
 STAPPEN = ("publicaties", "bijlagen", "regeling", "rtr", "wijzigingen", "index")
 GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
 
-# What a besluit has outside the public sources: the organisation's own files.
-# README.txt names each with a '!' in front until a file matching the pattern
-# is put in the besluit folder (under the fase's submap, or anywhere outside
-# RTR/ for fase "").  ``intern`` in the config names the expected file.
-# (sleutel, fase, sectie, omschrijving, patroon, alleen bij een wijziging)
-VERWACHT = (
-    ("mutaties", "", "readme", "overzicht mutaties (.xlsx)", "*.xlsx", True),
-    ("ontwerp.kennisgeving", "Ontwerp", "kennisgeving terinzagelegging",
-     "kennisgeving terinzagelegging (.docx)", "*.docx", False),
-    ("ontwerp.renvooi", "Ontwerp", "renvooi", "renvooi (.pdf)", "*renvooi*", True),
-    ("ontwerp.kb", "Ontwerp", "Match", "Match-bestand (.kb)", "*.kb", False),
-    ("ontwerp.zip", "Ontwerp", "Match", "aanleverpakket (.zip)", "*.zip", False),
-    ("ontwerp.geconsolideerd", "Ontwerp", "Match", "geconsolideerde versie uit Match (.pdf)",
-     "*geconsolideerd*", False),
-    ("besluit.kb", "Definitief", "Match", "Match-bestand (.kb)", "*.kb", False),
-    ("besluit.zip", "Definitief", "Match", "aanleverpakket (.zip)", "*.zip", False),
-)
-
 
 # ── configuration ────────────────────────────────────────────────────
 
@@ -109,8 +91,6 @@ class Besluit:
     toestanden: list[dict[str, Any]]
     peildata: list[date]
     opmerking: str = ""
-    dm: list[dict[str, str]] = field(default_factory=list)  # {omschrijving, nummer, fase?}
-    intern: dict[str, str] = field(default_factory=dict)    # VERWACHT-sleutel -> bestandsnaam
     # The day the ontwerp and the besluit became visible in the DSO (their bekendmaking).
     zichtbaar: dict[str, date] = field(default_factory=dict)  # {"ontwerp": …, "besluit": …}
     tot: date | None = None  # next besluit's in-werking date (exclusive)
@@ -161,8 +141,7 @@ def lees_config(pad: str) -> Config:
         ontwerp=b.get("ontwerp", []), definitief=b["definitief"],
         toestanden=b.get("toestanden", []),
         peildata=[date.fromisoformat(d) for d in b.get("rtr_peildata", [])],
-        opmerking=b.get("opmerking", ""), dm=b.get("dm", []),
-        intern=b.get("intern", {}),
+        opmerking=b.get("opmerking", ""),
         zichtbaar={k: date.fromisoformat(v) for k, v in b.get("zichtbaar_in_dso", {}).items()})
         for b in ruw["besluiten"]]
     for b in besluiten:
@@ -170,12 +149,6 @@ def lees_config(pad: str) -> Config:
             if docs and fase not in b.zichtbaar:
                 raise ValueError(f"{b.map}: zichtbaar_in_dso.{fase} ontbreekt (de dag waarop het "
                                  f"{fase} zichtbaar werd in het DSO; de map wordt ernaar genoemd)")
-    bekend = {v[0] for v in VERWACHT}
-    for b in besluiten:
-        onbekend = set(b.intern) - bekend
-        if onbekend:
-            raise ValueError(f"{b.map}: onbekende sleutel(s) in intern: {', '.join(sorted(onbekend))} "
-                             f"(bekend: {', '.join(sorted(bekend))})")
     besluiten.sort(key=lambda b: b.in_werking)
     for huidig, volgend in zip(besluiten, besluiten[1:]):
         huidig.tot = volgend.in_werking
@@ -710,9 +683,10 @@ class Archief:
         """README.txt of a besluit folder; returns the number of '!' lines.
 
         Section by section what is in the folder, and with a '!' in front
-        what belongs to the besluit but is not there (VERWACHT, DM numbers).
-        A file put in the folder by hand is listed where its name fits an
-        expected document, otherwise under "overige bestanden".
+        what belongs to the besluit but is not there: a publication, kaart or
+        bijlage that was not downloaded, a toestand that was not printed.  A
+        file put in the folder by hand is listed as the inspraakrapport when
+        its name says so, otherwise under "overige bestanden".
         """
         T = "\t"
         bijl: dict[str, Any] = {}
@@ -745,19 +719,6 @@ class Archief:
             nonlocal uitroep
             uitroep += 1
             regels.append("!" + T * inspringen + tekst)
-
-        def verwacht(regels: list[str], sleutel: str) -> None:
-            _, fase, _, omschrijving, patroon, alleen_wijziging = next(v for v in VERWACHT if v[0] == sleutel)
-            if alleen_wijziging and b.nieuw:
-                return
-            naam = b.intern.get(sleutel, "")
-            gevonden = [r for r in alle if r not in genoemd and (not fase or r.startswith(b.submap(fase) + "/"))
-                        and (fnmatch(os.path.basename(r).lower(), patroon)
-                             or os.path.basename(r) == naam)]
-            for r in gevonden:
-                bestand(regels, r)
-            if not gevonden:
-                ontbreekt(regels, f"{naam}  ({omschrijving})" if naam else omschrijving)
 
         def publicatie(regels: list[str], submap: str, doc: dict[str, str]) -> None:
             p = bijl.get(doc["id"], {})
@@ -808,7 +769,6 @@ class Archief:
         r.append(T * 2 + "README.txt")
         if "bijlagen.json" in alle:
             bestand(r, "bijlagen.json")
-        verwacht(r, "mutaties")
 
         if b.ontwerp:
             r = sectie("ontwerp")
@@ -817,12 +777,6 @@ class Archief:
             r = sectie("kennisgeving terinzagelegging")
             for d in kennisgevingen:
                 publicatie(r, "Ontwerp", d)
-            verwacht(r, "ontwerp.kennisgeving")
-            if not b.nieuw:
-                verwacht(sectie("renvooi ontwerp"), "ontwerp.renvooi")
-            r = sectie("Match ontwerp")
-            for sleutel in ("ontwerp.kb", "ontwerp.zip", "ontwerp.geconsolideerd"):
-                verwacht(r, sleutel)
             if bijlagen_van(b.ontwerp, "bijlage"):
                 overige_bijlagen(sectie("bijlagen ontwerp"), bijlagen_van(b.ontwerp, "bijlage"))
         # Only when there is one: a besluit without a published inspraakrapport
@@ -839,9 +793,6 @@ class Archief:
             for d in b.definitief:
                 if d["soort"] == "kennisgeving":
                     publicatie(r, "Definitief", d)
-        r = sectie("Match besluit")
-        for sleutel in ("besluit.kb", "besluit.zip"):
-            verwacht(r, sleutel)
         kaarten(sectie("kaarten" if b.nieuw else "gewijzigde kaarten"),
                 bijlagen_van(b.definitief, "kaart") + bijlagen_van(b.ontwerp, "kaart"))
         if any(x["bestand"] not in genoemd for x in bijlagen_van(b.definitief, "bijlage")):
@@ -881,14 +832,6 @@ class Archief:
                          f"{date.fromisoformat(v['laatst_gezien']):%d-%m-%Y}, weg op "
                          f"{date.fromisoformat(v['eerst_weg']):%d-%m-%Y}")
 
-        dm = []
-        for x in self.config.regeling.get("dm", []) + b.dm:
-            dm.append(T + f"{x['omschrijving']}: DM {x['nummer']}")
-        fasen = {x.get("fase") for x in b.dm}
-        for fase, tekst in (("ontwerp", "Bestuursstukken ontwerp"), ("besluit", "Bestuursstukken besluit")):
-            if fase not in fasen and (fase == "besluit" or b.ontwerp):
-                ontbreekt(dm, f"{tekst}: DM-nummer", inspringen=1)
-
         bekendmaking = ", ".join(d["id"] for d in besluit)
         kop = [self.config.regeling["titel"],
                f"Besluit van {b.besluitdatum:%d-%m-%Y}, bekendmaking {bekendmaking}",
@@ -904,7 +847,6 @@ class Archief:
         for naam, inhoud in secties:
             if inhoud:  # what was not published is not mentioned
                 regels += [T + naam] + inhoud + [""]
-        regels += ["DM"] + dm + [""]
         regels += ["Toelichting"] + [textwrap.fill(p, 100, initial_indent=T, subsequent_indent=T) + "\n"
                                      for p in (
             "Publicaties komen uit het Waterschapsblad (zoek.officielebekendmakingen.nl), de hele "
@@ -939,7 +881,7 @@ class Archief:
                   "gold, en de toepasbare regels: volledige vastleggingen op de gekozen peildata en "
                   "een map per dag waarop later nog iets veranderde. Het `README.txt` in elke map "
                   "noemt wat erin zit, en met een `!` vooraan wat bij het besluit hoort maar er niet "
-                  "in zit (interne bestanden, DM-nummers); de kolom Nakijken telt die regels.", "",
+                  "in zit; de kolom Nakijken telt die regels.", "",
                   "| Besluit | Map | In werking | Ontwerp | Definitief | Kaarten | Bijlagen "
                   "| Vastleggingen | Gewijzigd op | Nakijken |",
                   "|---|---|---|---|---|---|---|---|---|---|"]

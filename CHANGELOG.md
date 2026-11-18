@@ -14,11 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Statusoverzicht kan per soort de begindatum van de versie tonen (`Geldig vanaf …`); het archief gebruikt dat
 - STTR-manifest vermeldt einddatum, functioneleStructuurRef en SHA-256
 - Archief: stap `bijlagen` haalt per publicatie de kaarten (GIO's als GML), PDF-informatieobjecten (zoals het inspraakrapport) en externe bijlagen op, met herkomst in `bijlagen.json`; een gelijke bijlage wordt één keer opgeslagen. Kaarten staan in `kaarten/` naast `RTR/`, alleen in de versie van het besluit (`ONTWERP_…` voor een kaart die alleen het ontwerp had)
-- Archief: `README.txt` per besluit vervangt `LEESMIJ.md`; noemt wat erin zit en met een `!` wat erbij hoort maar ontbreekt (interne bestanden, DM-nummers), met `intern`, `dm` en `opmerking` in het JSON-bestand
+- Archief: `README.txt` per besluit vervangt `LEESMIJ.md`; noemt wat erin zit en met een `!` wat erbij hoort maar ontbreekt (een publicatie, kaart of bijlage die niet gedownload is, een toestand die niet is afgedrukt), met `opmerking` uit het JSON-bestand
 - Archief: versiegeschiedenis en logboek staan in `log/` (`--werkmap`) in plaats van in het archief, en het archief krijgt geen kopie van het JSON-bestand meer; een bestaand archief wordt bij de volgende run opgeruimd
 - Archief: `Ontwerp_<jjjjmmdd>` en `Definitief_<jjjjmmdd>`, genoemd naar de dag waarop de publicatie zichtbaar werd in het DSO (nieuw: `zichtbaar_in_dso` in het JSON-bestand); een bestaand archief wordt bij de volgende run hernoemd
-- `data/archief_CVDR707248.json`: zichtbaar_in_dso per besluit en de DM-nummers van de bestuursvoorstellen uit de teksten ("gelezen het voorstel van … met nr. DM …")
-- `data/archief_CVDR707248.json`: kennisgeving wsb-2025-12605 (inspraak op de ontwerp-wijziging van de werkingsgebieden) bij het besluit van 15-07-2025 en het DM-nummer van het ontwerp-wijzigingsbesluit 2024
+- `data/archief_CVDR707248.json`: zichtbaar_in_dso per besluit
+- `data/archief_CVDR707248.json`: kennisgeving wsb-2025-12605 (inspraak op de ontwerp-wijziging van de werkingsgebieden) bij het besluit van 15-07-2025
 
 ## [2.0.0] - 2026-11-17
 
