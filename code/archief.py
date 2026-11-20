@@ -24,15 +24,17 @@ One folder per definitief besluit, named after its besluitdatum:
         kaarten/     the GIOs (GML) the besluit sets; ONTWERP_… for one only the ontwerp had
         RTR/
           20250801_volledig/   status.xlsx  werkingsgebieden.txt  STTR/ (+ manifest.json)
-          20250808_volledig/   …
-          20250902_gewijzigd/  STTR/ (+ manifest.json): only what took effect that day
+          20250806_gewijzigd/  STTR/ (+ manifest.json): only what took effect that day
+          20250902_gewijzigd/  …
 
 Completeness: every STTR version the RTR knows for the bestuursorgaan is filed
 under the besluit in whose period (its in-werking date up to the next one) it
-took effect.  It is in one of that besluit's full snapshots when it was valid
-on a peildatum; otherwise it gets a ``<date>_gewijzigd`` folder named after
-the day it took effect.  That holds for later modifications and for
-short-lived first uploads alike.
+took effect.  Each besluit has one full snapshot, on its peildatum: a version
+valid that day is in it; a later one gets a ``<date>_gewijzigd`` folder named
+after the day it took effect, until the next besluit is in werking.  So does
+an earlier one, except in the run-up (``AANLOOP``): a version that came and
+went in the last days before the snapshot, while the rules were still being
+uploaded, is left out; the snapshot holds what that run-up led to.
 
 Each run adds to the archive.  A besluit that is complete (see
 ``Archief.compleet``) is not fetched again; it only gets new
@@ -91,6 +93,10 @@ GEWIJZIGD = re.compile(r"^\d{8}_gewijzigd$")
 # The blad a decentralised government publishes in, by the prefix of the publication id.
 BLADEN = {"wsb": "Waterschapsblad", "prb": "Provinciaal blad", "gmb": "Gemeenteblad"}
 RIJKSBLADEN = {"stcrt": "Staatscourant", "stb": "Staatsblad"}
+# A besluit's toepasbare regels come in over several days.  A version that came
+# and went in this many days before the besluit's full snapshot belongs to that
+# upload run-up, not to a state the rules settled in, and is not archived.
+AANLOOP = timedelta(days=7)
 
 
 class ConfigFout(ValueError):
@@ -161,6 +167,10 @@ class Besluit:
     def bevat(self, d: date) -> bool:
         return self.in_werking is not None and self.in_werking <= d and (self.tot is None or d < self.tot)
 
+    def in_aanloop(self, d: date) -> bool:
+        """*d* falls in the run-up to the full snapshot: at most ``AANLOOP`` before the peildatum."""
+        return bool(self.peildata) and self.peildata[0] - AANLOOP <= d < self.peildata[0]
+
 
 @dataclass
 class Config:
@@ -229,6 +239,9 @@ def _lees_config(pad: str, ruw: dict[str, Any]) -> Config:
             raise ConfigFout(f"{wie}: in_werking zonder definitief besluit")
         if (b.toestanden or b.peildata) and not b.in_werking:
             raise ConfigFout(f"{wie}: toestanden of rtr_peildata, maar in_werking ontbreekt")
+        if len(b.peildata) > 1:
+            raise ConfigFout(f"{wie}: één peildatum per besluit (rtr_peildata), niet {len(b.peildata)}: "
+                             "één volledige vastlegging, daarna een map per dag waarop iets wijzigde")
         for fase, docs in (("ontwerp", b.ontwerp), ("besluit", b.definitief)):
             for doc in docs:
                 blad(doc["id"])
@@ -868,7 +881,8 @@ class Archief:
     def index(self) -> dict[str, Any]:
         h = Versiehistorie(self.historiepad,
                            self.config.bestuursorgaan, self.client.base_url)
-        alle = {v["sttrId"] for v in h.versies()}
+        begin = {str(v["sttrId"]): nl_datum(v["begindatum"]) for v in h.versies()}
+        alle = set(begin)
         gearchiveerd: dict[str, list[str]] = defaultdict(list)
         mappen: dict[str, dict[str, Any]] = {}
         for wortel, _, bestanden in os.walk(self.uit):
@@ -879,8 +893,14 @@ class Archief:
                 mappen[rel] = m
                 for s in m["sttrs"]:
                     if not s.get("vervallen"):
-                        gearchiveerd[s["sttrId"]].append(rel)
-        ontbreekt = sorted(alle - set(gearchiveerd))
+                        gearchiveerd[str(s["sttrId"])].append(rel)
+        # Left out on purpose: it came and went in the run-up to its besluit's snapshot.
+        op_nummer = lambda i: (len(i), i)  # noqa: E731
+        aanloop = sorted((i for i in alle - set(gearchiveerd)
+                          if (b := self.config.besluit_voor(begin[i])) and b.in_aanloop(begin[i])), key=op_nummer)
+        ontbreekt = sorted(alle - set(gearchiveerd) - set(aanloop), key=op_nummer)
+        uitkomst = {"versies": len(alle), "gearchiveerd": len(alle) - len(ontbreekt) - len(aanloop),
+                    "aanloop": aanloop, "ontbreekt": ontbreekt}
 
         # What earlier versions kept in the archive and now lives in the werkmap
         # (or, for the config, in the repository).
@@ -910,11 +930,10 @@ class Archief:
                     nakijken[b.map] = sum(1 for r in f if r.startswith("!"))
         weg = [v for b in self.config.besluiten for v in weg_per[b.map]]
         if self.gewijzigd or not os.path.exists(os.path.join(self.uit, "README.md")):
-            self._readme(mappen, len(alle), len(alle) - len(ontbreekt), ontbreekt, weg, nakijken)
+            self._readme(mappen, uitkomst, weg, nakijken)
         elif os.path.exists(os.path.join(self.uit, "index.csv")):
             log.info("Archief ongewijzigd: README.md en index.csv blijven zoals ze zijn")
-            return {"versies": len(alle), "gearchiveerd": len(alle) - len(ontbreekt),
-                    "ontbreekt": ontbreekt}
+            return uitkomst
         # Last, so the hashes cover the README files just written.
         with open(os.path.join(self.uit, "index.csv"), "w", encoding="utf-8", newline="") as f:
             w = csv.writer(f, delimiter=";")
@@ -927,8 +946,7 @@ class Archief:
                     pad = os.path.join(wortel, naam)
                     w.writerow([os.path.relpath(pad, self.uit).replace(os.sep, "/"),
                                 os.path.getsize(pad), sha256(pad)])
-        return {"versies": len(alle), "gearchiveerd": len(alle) - len(ontbreekt),
-                "ontbreekt": ontbreekt}
+        return uitkomst
 
     def _readme_txt(self, b: Besluit, mappen: dict[str, dict[str, Any]],
                     weg: list[dict[str, Any]], alleen_als_anders: bool = False) -> int:
@@ -1129,11 +1147,13 @@ class Archief:
             "GML van de werkingsgebieden (GIO's) die een publicatie vaststelt; bijlagen zijn de "
             "informatieobjecten (PDF) en externe bijlagen die ze meestuurt. bijlagen.json noemt per "
             "bestand de bron en SHA-256.",
-            "Een volledige vastlegging bevat alle toepasbare regels die op die dag golden (status.xlsx "
+            "De volledige vastlegging bevat alle toepasbare regels die op die dag golden (status.xlsx "
             "met per soort de datum waarop de versie inging, werkingsgebieden.txt, en STTR/). Een map "
-            "..._gewijzigd bevat alleen de versies die op die dag ingingen en in geen volledige "
-            "vastlegging van dit besluit staan; STTR/manifest.json noemt per bestand welke versie het "
-            "vervangt en waardoor het werd vervangen.",
+            "..._gewijzigd bevat alleen de versies die op die dag ingingen en niet in de volledige "
+            "vastlegging van dit besluit staan, tot het volgende besluit in werking trad; "
+            "STTR/manifest.json noemt per bestand welke versie het vervangt en waardoor het werd "
+            f"vervangen. Wat in de {AANLOOP.days} dagen vóór de volledige vastlegging kwam en weer "
+            "ging, terwijl de toepasbare regels nog werden aangeleverd, is niet opgenomen.",
             "Uit de RTR verdwenen: de RTR haalt activiteiten en regelbeheerobjecten uit de boom zonder "
             "hun STTR-versies te beëindigen. Hun bestanden staan in dit archief; de lijst zegt wanneer "
             "ze verdwenen (tussen twee rondes door de boom).")]
@@ -1157,7 +1177,7 @@ class Archief:
         self.gewijzigd.add(b.map)
         return uitroep
 
-    def _readme(self, mappen, totaal: int, gearchiveerd: int, ontbreekt: list[str],
+    def _readme(self, mappen, uitkomst: dict[str, Any],
                 weg: list[dict[str, Any]], nakijken: dict[str, int]) -> None:
         bo = self.config.bestuursorgaan
         regels = [f"# Archief {self.config.regeling['titel']}", "",
@@ -1166,8 +1186,9 @@ class Archief:
                   "Per definitief besluit één map, genoemd naar de besluitdatum. Daarin het ontwerp "
                   "en de kennisgevingen, het besluit zelf, de kaarten (GML) en bijlagen die ze "
                   "vaststellen of meesturen, de hele regeling zoals die vanaf de inwerkingtreding "
-                  "gold, en de toepasbare regels: volledige vastleggingen op de gekozen peildata en "
-                  "een map per dag waarop later nog iets veranderde. Het `README.txt` in elke map "
+                  "gold, en de toepasbare regels: een volledige vastlegging op de peildatum en een "
+                  "map per dag waarop daarna nog iets veranderde, tot het volgende besluit in werking "
+                  "trad. Het `README.txt` in elke map "
                   "noemt wat erin zit, en met een `!` vooraan wat bij het besluit hoort maar er niet "
                   "in zit; de kolom Nakijken telt die regels.", "",
                   "| Besluit | Map | In werking | Ontwerp | Definitief | Kaarten | Bijlagen "
@@ -1189,10 +1210,16 @@ class Archief:
                 f"{len(b.ontwerp)} | {len(b.definitief)} + {len(b.toestanden)} regeling | "
                 f"{tel['kaarten']} | {tel['bijlagen']} | {vast or '-'} | {gew} dag(en) | "
                 f"{nakijken.get(b.map, 0)} |")
+        aanloop, ontbreekt = uitkomst["aanloop"], uitkomst["ontbreekt"]
         regels += ["", "## Volledigheid", "",
-                   f"De RTR kent {totaal} versies van toepasbare regels voor dit bestuursorgaan; "
-                   f"{gearchiveerd} daarvan staan in dit archief"
-                   + (" (alle)." if not ontbreekt else f". Ontbrekend: {', '.join(ontbreekt)}."), "",
+                   f"De RTR kent {uitkomst['versies']} versies van toepasbare regels voor dit "
+                   f"bestuursorgaan; {uitkomst['gearchiveerd']} daarvan staan in dit archief"
+                   + (" (alle)." if not ontbreekt and not aanloop else ".")
+                   + (f" {len(aanloop)} versie(s) kwamen en gingen in de aanloop naar de volledige "
+                      f"vastlegging van hun besluit (de {AANLOOP.days} dagen ervoor, terwijl de "
+                      "toepasbare regels nog werden aangeleverd) en zijn bewust niet opgenomen: "
+                      f"{', '.join(aanloop)}." if aanloop else "")
+                   + (f" Ontbrekend: {', '.join(ontbreekt)}." if ontbreekt else ""), "",
                    "De versiegeschiedenis is opgebouwd door de activiteitenboom maandelijks en op "
                    "elke peildatum af te lopen en per regelbeheerobject de keten van versies te "
                    "volgen. Een regelbeheerobject dat korter dan een maand bestond tussen twee "
@@ -1216,10 +1243,11 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
     """Every version that no full snapshot of its own besluit holds.
 
     A version belongs to the besluit in whose period it took effect.  When
-    one of that besluit's snapshots holds it, it is archived there; otherwise
-    it goes to ``(besluitmap, "<jjjjmmdd>_gewijzigd")`` for the day it took
-    effect.  A regelbeheerobject whose last version ended is recorded as
-    vervallen on the day after, in the same way.
+    that besluit's snapshot holds it, it is archived there; otherwise it goes
+    to ``(besluitmap, "<jjjjmmdd>_gewijzigd")`` for the day it took effect,
+    unless that day is in the run-up to the snapshot (``Besluit.in_aanloop``).
+    A regelbeheerobject whose last version ended is recorded as vervallen on
+    the day after, in the same way.
     """
     uit: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for ref, r in refs.items():
@@ -1229,7 +1257,7 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
             b = config.besluit_voor(begin)
             if b is None:
                 continue
-            if str(v["sttrId"]) in in_vastlegging.get(b.map, set()):
+            if str(v["sttrId"]) in in_vastlegging.get(b.map, set()) or b.in_aanloop(begin):
                 continue
             uit[(b.map, f"{begin:%Y%m%d}_gewijzigd")].append({
                 **v, "sttrId": str(v["sttrId"]), "ref": ref, "activiteit": r["activiteit"], "soort": r["label"],
@@ -1239,7 +1267,7 @@ def verdeel(config: Config, refs: dict[str, dict[str, Any]],
         if versies and versies[-1].get("einddatum"):
             weg = nl_datum(versies[-1]["einddatum"]) + timedelta(days=1)
             b = config.besluit_voor(weg)
-            if weg <= tot and b is not None:
+            if weg <= tot and b is not None and not b.in_aanloop(weg):
                 uit[(b.map, f"{weg:%Y%m%d}_gewijzigd")].append({
                     "vervallen": True, "ref": ref, "activiteit": r["activiteit"],
                     "soort": r["label"], "omschrijving": omschrijving(r["activiteit"]),
@@ -1450,9 +1478,10 @@ def draai(args: argparse.Namespace, stappen: list[str]) -> int:
         archief.wijzigingen(tot)
     if "index" in stappen:
         uitkomst = archief.index()
-        log.info("Volledigheid: %d van %d versies gearchiveerd%s", uitkomst["gearchiveerd"],
-                 uitkomst["versies"], "" if not uitkomst["ontbreekt"] else
-                 f"; ontbrekend: {', '.join(uitkomst['ontbreekt'])}")
+        log.info("Volledigheid: %d van %d versies gearchiveerd%s%s", uitkomst["gearchiveerd"],
+                 uitkomst["versies"],
+                 f"; {len(uitkomst['aanloop'])} uit de aanloop niet opgenomen" if uitkomst["aanloop"] else "",
+                 f"; ontbrekend: {', '.join(uitkomst['ontbreekt'])}" if uitkomst["ontbreekt"] else "")
         if uitkomst["ontbreekt"]:
             return 1
     log.info("Klaar; %d verzoeken aan de RTR", client.requests_made)

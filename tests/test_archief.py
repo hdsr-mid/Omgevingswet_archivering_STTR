@@ -132,6 +132,11 @@ class Config(unittest.TestCase):
             config([besluit("2023-12-20", "2024-01-01", ["2025-08-08"], "wsb-1"),
                     besluit("2025-07-15", "2025-07-24", [], "wsb-2")])
 
+    def test_een_peildatum_per_besluit(self):
+        # One full snapshot per besluit; what changed after it gets dated folders.
+        with self.assertRaisesRegex(archief.ConfigFout, "één peildatum per besluit"):
+            config([besluit("2025-07-15", "2025-07-24", ["2025-08-01", "2025-08-08"], "wsb-1")])
+
 
 class Exitcodes(unittest.TestCase):
     """2: the config cannot be used; 3: the national government, which is not supported."""
@@ -493,6 +498,35 @@ class Verdeel(unittest.TestCase):
         uit = archief.verdeel(self.c, self.refs, snap, date(2026, 11, 17))
         self.assertIn((self.b1, "20240322_gewijzigd"), uit)
 
+    def test_aanloop_naar_de_vastlegging_wordt_overgeslagen(self):
+        # Besluit 2's rules came in from 03-01; the snapshot is on 20-01.  What came
+        # and went in the 7 days before it is the upload run-up and is left out;
+        # what came 8 days before stays, as does what came after.
+        refs = {"ref-c": {"activiteit": "nl.x.activiteit.C", "label": "Conclusie", "versies": [
+            versie("20", "12-01-2025", "12-01-2025"),   # 8 days before: kept
+            versie("21", "13-01-2025", "16-01-2025"),   # 7 days before: run-up
+            versie("22", "19-01-2025", "19-01-2025"),   # the day before: run-up
+            versie("23", "20-01-2025", "03-02-2025"),   # in the snapshot
+            versie("24", "04-02-2025", None),           # later modification
+        ]}, "ref-d": {"activiteit": "nl.x.activiteit.D", "label": "Melding", "versies": [
+            versie("30", "03-01-2025", "15-01-2025"),   # its object went in the run-up
+        ]}}
+        uit = archief.verdeel(self.c, refs, {self.b2: {"23"}}, date(2026, 11, 17))
+        self.assertEqual(sorted(uit), [(self.b2, "20250103_gewijzigd"), (self.b2, "20250112_gewijzigd"),
+                                       (self.b2, "20250204_gewijzigd")])
+        self.assertEqual([v["sttrId"] for v in uit[(self.b2, "20250112_gewijzigd")]], ["20"])
+        later = uit[(self.b2, "20250204_gewijzigd")][0]
+        self.assertEqual((later["sttrId"], later["vervangt"]), ("24", "23"))
+
+    def test_aanloop_alleen_voor_de_eigen_vastlegging(self):
+        b1, b2 = self.c.besluiten
+        self.assertTrue(b2.in_aanloop(date(2025, 1, 13)))
+        self.assertFalse(b2.in_aanloop(date(2025, 1, 12)))
+        self.assertFalse(b2.in_aanloop(date(2025, 1, 20)))  # the peildatum itself
+        self.assertFalse(b1.in_aanloop(date(2025, 1, 13)))
+        zonder = config([besluit("2024-12-17", "2025-01-01", [], "wsb-2")]).besluiten[0]
+        self.assertFalse(zonder.in_aanloop(date(2025, 1, 13)))
+
 
 class Verdwenen(unittest.TestCase):
     def test_activiteit_en_los_regelbeheerobject(self):
@@ -734,6 +768,28 @@ class AlleenInhoud(unittest.TestCase):
             with open(os.path.join(uit, "index.csv"), encoding="utf-8") as f:
                 self.assertNotIn("versiehistorie", f.read())
             self.assertEqual(a.historiepad, os.path.join(werk, "archief_CVDR1_versiehistorie.json"))
+
+    def test_aanloop_telt_niet_als_ontbrekend(self):
+        with tempfile.TemporaryDirectory() as uit, tempfile.TemporaryDirectory() as werk:
+            c = config([besluit("2024-12-17", "2025-01-01", ["2025-01-20"], "wsb-2024-90001")])
+            c.pad = os.path.join(werk, "archief_CVDR1.json")
+            a = archief.Archief(c, uit, SimpleNamespace(base_url="fake"), werkmap=werk)
+            with open(a.historiepad, "w", encoding="utf-8") as f:
+                json.dump({"walks": [], "activiteiten": {}, "refs": {"ref-c": {
+                    "activiteit": "nl.x.activiteit.C", "label": "Conclusie", "versies": [
+                        versie("21", "13-01-2025", "16-01-2025"),   # run-up
+                        versie("23", "20-01-2025", None),           # in the snapshot
+                        versie("25", "05-01-2025", "06-01-2025"),   # earlier, but not archived
+                    ]}}}, f)
+            maak_bestand(os.path.join(a.map(c.besluiten[0]), "RTR", "20250120_volledig", "STTR",
+                                      "manifest.json"), b'{"sttrs": [{"sttrId": "23"}]}')
+            uitkomst = a.index()
+            self.assertEqual((uitkomst["versies"], uitkomst["gearchiveerd"], uitkomst["aanloop"],
+                              uitkomst["ontbreekt"]), (3, 1, ["21"], ["25"]))
+            with open(os.path.join(uit, "README.md"), encoding="utf-8") as f:
+                tekst = f.read()
+            self.assertIn("1 versie(s) kwamen en gingen in de aanloop", tekst)
+            self.assertIn("Ontbrekend: 25.", tekst)
 
     def test_index_op_leeg_archief(self):
         from types import SimpleNamespace
