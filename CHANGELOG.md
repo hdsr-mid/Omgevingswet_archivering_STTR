@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exitcodes: 2 als het JSON-bestand of een optie onbruikbaar is (archief), 3 voor het Rijk (archief en `main.py`), dat niet wordt ondersteund; 1 blijft: versies ontbreken
 - `data/archief_CVDR707248.json`: kennisgeving wsb-2025-12605 (inspraak op de ontwerp-wijziging van de werkingsgebieden) bij het besluit van 15-07-2025
 - Archief: één volledige vastlegging per besluit (`rtr_peildata` met meer dan één datum is een fout in het JSON-bestand); wat daarna inging, krijgt een map `<datum>_gewijzigd` tot het volgende besluit in werking treedt. Versies die in de 7 dagen vóór de vastlegging kwamen en weer gingen (de aanloop) worden niet opgenomen; `README.md` van het archief noemt ze apart, en ze tellen niet als ontbrekend
+- `data/archief_CVDR707248.json`: één peildatum per besluit (15-01-2024, 01-08-2025 en 28-05-2026 blijven)
 
 ## [2.0.0] - 2026-11-17
 

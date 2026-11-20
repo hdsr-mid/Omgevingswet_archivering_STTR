@@ -34,7 +34,7 @@
         {"nummer": 1, "geldig_vanaf": "2024-01-01"},
         {"nummer": 2, "geldig_vanaf": "2024-01-02"}
       ],
-      "rtr_peildata": ["2024-01-15", "2024-03-28"]
+      "rtr_peildata": ["2024-01-15"]
     },
     {
       "besluitdatum": "2024-12-17",
@@ -79,8 +79,8 @@
         {"id": "wsb-2025-17997", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden inhoudende de wijziging van hoofdstuk 2, 3 en 4"}
       ],
       "toestanden": [{"nummer": 5, "geldig_vanaf": "2025-07-24"}],
-      "rtr_peildata": ["2025-08-01", "2025-08-08"],
-      "opmerking": "De toepasbare regels kwamen in twee volledige rondes: 29-31 juli (vastgelegd op 1 augustus) en 6-7 augustus (vastgelegd op 8 augustus)."
+      "rtr_peildata": ["2025-08-01"],
+      "opmerking": "De toepasbare regels kwamen in twee volledige rondes: 29-31 juli (de volledige vastlegging op 1 augustus) en 6-7 augustus (de mappen 20250806_gewijzigd en 20250807_gewijzigd)."
     },
     {
       "besluitdatum": "2025-10-08",
@@ -111,8 +111,8 @@
         {"id": "wsb-2026-12499", "soort": "besluit", "titel": "Wijzigingsbesluit Waterschapsverordening Hoogheemraadschap De Stichtse Rijnlanden"}
       ],
       "toestanden": [{"nummer": 7, "geldig_vanaf": "2026-05-20"}],
-      "rtr_peildata": ["2026-05-28", "2026-06-10"],
-      "opmerking": "De toepasbare regels kwamen van 27 mei tot 9 juni; 28 mei legt de eerste ronde vast, 10 juni de volledige."
+      "rtr_peildata": ["2026-05-28"],
+      "opmerking": "De toepasbare regels kwamen van 27 mei tot 9 juni; de volledige vastlegging op 28 mei legt de eerste ronde vast, wat tot en met 9 juni volgde staat in de mappen ..._gewijzigd."
     },
     {
       "besluitdatum": "2026-09-22",
